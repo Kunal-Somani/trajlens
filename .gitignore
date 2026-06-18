@@ -1,0 +1,40 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# uv / pip
+.venv/
+venv/
+.uv/
+uv.lock
+
+# pytest / coverage
+.pytest_cache/
+.coverage
+htmlcov/
+.hypothesis/
+
+# mypy
+.mypy_cache/
+
+# ruff
+.ruff_cache/
+
+# editors
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# trajlens runtime artifacts
+*.html.report
+audit_results/
