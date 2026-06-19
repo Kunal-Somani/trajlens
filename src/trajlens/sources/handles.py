@@ -20,7 +20,11 @@ def open_parquet_shard(path: Path) -> pq.ParquetFile:
     """Open a Parquet shard lazily; row groups stream on read, never the whole file."""
     if not path.is_file():
         raise DatasetFormatError(f"expected parquet shard not found: {path}")
-    return pq.ParquetFile(path)
+    # pyarrow's ParquetFile constructor remains untyped through 24.x despite
+    # partial py.typed support added in pyarrow 19+; the per-module mypy
+    # override (disallow_untyped_calls = false) does not suppress this for
+    # reasons not fully understood -- suppressing at the call site instead.
+    return pq.ParquetFile(path)  # type: ignore[no-untyped-call]
 
 
 @dataclass(frozen=True, slots=True)
