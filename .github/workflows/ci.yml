@@ -65,7 +65,7 @@ jobs:
         # -m 'not integration' excludes Hub-hitting tests from the standard run
         run: pytest -m "not integration" --cov=src/trajlens --cov-report=xml
       - name: Upload coverage
-        uses: codecov/codecov-action@v4
+        uses: codecov/codecov-action@v7
         if: matrix.python-version == '3.12'
         with:
           files: coverage.xml
