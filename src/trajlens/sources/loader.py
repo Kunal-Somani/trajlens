@@ -22,6 +22,8 @@ from trajlens.sources.info import DatasetInfoModel, load_info
 from trajlens.sources.paths import safe_join
 from trajlens.sources.version import DatasetVersion, detect_version
 
+_HUB_CACHE_ROOT = Path.home() / ".cache" / "trajlens" / "hub"
+
 
 @dataclass(frozen=True, slots=True)
 class SourceHandle:
@@ -79,12 +81,28 @@ class SourceLoader:
                 f"Hugging Face Hub."
             ) from exc
 
+        # huggingface_hub's default cache stores files as symlinks into a
+        # content-addressed blobs/ dir that is a *sibling* of the snapshot
+        # directory it returns, not a descendant. safe_join's containment
+        # check correctly treats that as an escape, since it can't tell HF's
+        # own cache symlinks apart from a hostile dataset-committed symlink.
+        # local_dir sidesteps this: huggingface_hub 0.36 copies real files
+        # into it (file_download.py _hf_hub_download_to_local_dir) instead of
+        # symlinking, so the returned root behaves like a plain local dir.
+        # Keyed by revision so a later resolve() at a different revision
+        # doesn't silently serve stale cached content.
+        local_dir = _HUB_CACHE_ROOT / repo_id.replace("/", "--") / (revision or "main")
+
         try:
             # Resolving only needs meta/ to detect version and parse info.json;
             # data/video shards are fetched lazily when actually opened. Mirrors
             # lerobot's own metadata-only pull (dataset_metadata.py _pull_from_repo).
             snapshot_path = snapshot_download(
-                repo_id=repo_id, repo_type="dataset", revision=revision, allow_patterns="meta/"
+                repo_id=repo_id,
+                repo_type="dataset",
+                revision=revision,
+                allow_patterns="meta/",
+                local_dir=local_dir,
             )
         except Exception as exc:
             raise SourceResolutionError(
