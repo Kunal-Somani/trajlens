@@ -36,3 +36,17 @@ class TestSafeJoin:
     def test_empty_parts_are_noops(self, tmp_path: Path) -> None:
         result = safe_join(tmp_path, "", ".", "meta")
         assert result == (tmp_path / "meta").resolve()
+
+    def test_rejects_symlink_escaping_root(self, tmp_path: Path) -> None:
+        # A dataset can ship a literal symlink as tracked content, e.g.
+        # data/chunk-000/file-000.parquet -> /etc/passwd. The nominal,
+        # unresolved path looks contained; only resolving and then checking
+        # catches it. No '..' segment is involved, unlike the tests above.
+        secret = tmp_path / "secret.txt"
+        secret.write_text("outside the dataset root")
+        dataset_root = tmp_path / "dataset"
+        dataset_root.mkdir()
+        (dataset_root / "data.parquet").symlink_to(secret)
+
+        with pytest.raises(PathTraversalError, match="escapes dataset root"):
+            safe_join(dataset_root, "data.parquet")
