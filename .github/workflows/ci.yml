@@ -16,6 +16,10 @@ jobs:
       - uses: astral-sh/setup-uv@v4
         with:
           version: "latest"
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
       - name: Install ruff
         run: uv pip install --system ruff
       - name: ruff format check
@@ -82,8 +86,8 @@ jobs:
         run: |
           uv pip install --system -e ".[dev]"
           uv pip install --system pip-audit bandit
-      - name: pip-audit (no known CVEs in deps)
-        run: pip-audit --strict
+      - name: pip-audit (no known CVEs in third-party deps)
+        run: pip-audit --strict --skip-editable
       - name: bandit (static security lint)
         run: bandit -ll -r src/trajlens/
 
