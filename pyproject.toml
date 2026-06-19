@@ -50,7 +50,7 @@ dev = [
     # needed at dev/test time to mock Hub resolution and run the opt-in
     # integration test (05 §7 lists huggingface_hub as part of the core set)
     "huggingface_hub>=0.23,<1",
-    "pre-commit>=3.7,<4",
+    "pre-commit>=3.7,<5",
     "pip-audit>=2.7,<3",
     # types stubs
     "types-pyaudio",
