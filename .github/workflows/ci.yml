@@ -87,7 +87,7 @@ jobs:
           uv pip install --system -e ".[dev]"
           uv pip install --system pip-audit bandit
       - name: pip-audit (no known CVEs in third-party deps)
-        run: pip-audit --strict pyproject.toml
+        run: pip-audit --strict .
       - name: bandit (static security lint)
         run: bandit -ll -r src/trajlens/
 
