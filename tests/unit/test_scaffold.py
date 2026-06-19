@@ -24,14 +24,14 @@ from trajlens.errors import (
     DatasetVersionError,
     PathTraversalError,
     RepairError,
-    ResourceBoundExceeded,
+    ResourceBoundError,
     SourceResolutionError,
     TrajlensError,
 )
 from trajlens.logging import _REDACTED, _redact_secrets, configure_logging
 
-
 # ── Package import ─────────────────────────────────────────────────────────
+
 
 class TestPackageImport:
     def test_version_is_string(self) -> None:
@@ -46,6 +46,7 @@ class TestPackageImport:
 
 
 # ── Exception hierarchy ────────────────────────────────────────────────────
+
 
 class TestExceptionHierarchy:
     """All domain exceptions must inherit from TrajlensError so callers
@@ -69,8 +70,8 @@ class TestExceptionHierarchy:
     def test_repair_error_is_trajlens_error(self) -> None:
         assert issubclass(RepairError, TrajlensError)
 
-    def test_resource_bound_exceeded_is_dataset_error(self) -> None:
-        assert issubclass(ResourceBoundExceeded, DatasetError)
+    def test_resource_bound_error_is_dataset_error(self) -> None:
+        assert issubclass(ResourceBoundError, DatasetError)
 
     def test_path_traversal_error_is_dataset_error(self) -> None:
         assert issubclass(PathTraversalError, DatasetError)
@@ -86,6 +87,7 @@ class TestExceptionHierarchy:
 
 
 # ── Logging redaction ─────────────────────────────────────────────────────
+
 
 class TestLoggingRedaction:
     """Redaction is security-critical (T6 in threat model). Test every
@@ -119,7 +121,7 @@ class TestLoggingRedaction:
         result = self._run_redact({"secret": "abc"})
         assert result["secret"] == _REDACTED
 
-    def test_case_insensitive_TOKEN(self) -> None:
+    def test_case_insensitive_token_match(self) -> None:
         result = self._run_redact({"HF_TOKEN": "hf_value"})
         assert result["HF_TOKEN"] == _REDACTED
 
@@ -135,12 +137,14 @@ class TestLoggingRedaction:
         assert result["token"] == _REDACTED
 
     def test_mixed_dict_partial_redaction(self) -> None:
-        result = self._run_redact({
-            "event": "hub login",
-            "repo_id": "org/dataset",
-            "token": "hf_abc",
-            "user": "alice",
-        })
+        result = self._run_redact(
+            {
+                "event": "hub login",
+                "repo_id": "org/dataset",
+                "token": "hf_abc",
+                "user": "alice",
+            }
+        )
         assert result["event"] == "hub login"
         assert result["repo_id"] == "org/dataset"
         assert result["token"] == _REDACTED
@@ -148,6 +152,7 @@ class TestLoggingRedaction:
 
 
 # ── configure_logging ─────────────────────────────────────────────────────
+
 
 class TestConfigureLogging:
     def test_configure_does_not_raise(self) -> None:

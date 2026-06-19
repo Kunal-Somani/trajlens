@@ -29,7 +29,7 @@ _REDACTED: str = "<redacted>"
 
 
 def _redact_secrets(
-    logger: Any,  # noqa: ANN401 — structlog processor signature
+    logger: Any,
     method: str,
     event_dict: dict[str, Any],
 ) -> dict[str, Any]:

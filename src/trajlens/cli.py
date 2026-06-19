@@ -6,7 +6,7 @@ All subcommands are defined here; heavy logic lives in the library modules.
 
 from __future__ import annotations
 
-from typing import Annotated, Optional
+from typing import Annotated
 
 import typer
 
@@ -30,7 +30,7 @@ def _version_callback(value: bool) -> None:
 @app.callback()
 def main(
     version: Annotated[
-        Optional[bool],
+        bool | None,
         typer.Option(
             "--version",
             "-V",
@@ -63,14 +63,14 @@ def lint(
         typer.Option("--json", help="Emit machine-readable JSON report to stdout."),
     ] = False,
     report: Annotated[
-        Optional[str],
+        str | None,
         typer.Option("--report", help="Write HTML report to this path."),
     ] = None,
 ) -> None:
     """Validate a LeRobotDataset and report its quality grade."""
-    # Implemented in M4–M6. Raises NotImplementedError so CI build-smoke test
+    # Implemented in M4-M6. Raises NotImplementedError so CI build-smoke test
     # (`trajlens --version`) passes while `trajlens lint` is correctly not-done.
-    raise NotImplementedError(
+    raise NotImplementedError(  # pragma: no cover — stub until M4
         "trajlens lint is not yet implemented (M4 milestone). "
         "Run `trajlens --version` to confirm the installation is working."
     )
@@ -87,12 +87,12 @@ def fix(
         typer.Option("--dry-run/--apply", help="Preview changes without writing (default)."),
     ] = True,
     out: Annotated[
-        Optional[str],
+        str | None,
         typer.Option("--out", help="Output path for the repaired dataset copy."),
     ] = None,
 ) -> None:
     """Repair issues found by lint (copy-on-write; dry-run by default)."""
-    raise NotImplementedError(
+    raise NotImplementedError(  # pragma: no cover — stub until v0.2
         "trajlens fix is not yet implemented (v0.2 milestone)."
     )
 
@@ -109,6 +109,6 @@ def web(
     ] = 8000,
 ) -> None:
     """Open the web dashboard for a dataset lint report."""
-    raise NotImplementedError(
+    raise NotImplementedError(  # pragma: no cover — stub until v0.2
         "trajlens web is not yet implemented (v0.2 milestone)."
     )

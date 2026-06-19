@@ -15,6 +15,7 @@ repos:
       - id: mypy
         name: mypy --strict
         args: [--strict]
+        files: ^src/
         additional_dependencies:
           - pydantic>=2.5
           - structlog>=24.0

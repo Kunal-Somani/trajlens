@@ -54,7 +54,7 @@ class RepairError(TrajlensError):
     """
 
 
-class ResourceBoundExceeded(DatasetError):
+class ResourceBoundError(DatasetError):
     """A dataset-declared count exceeds the hard ceiling for safe processing.
 
     Raised instead of attempting to iterate over a maliciously or accidentally
