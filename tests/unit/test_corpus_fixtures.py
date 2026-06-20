@@ -119,9 +119,9 @@ class TestCorpusClean:
         ds = _load(root)
         for check in [SCHEMA_CONSISTENCY, METADATA_DATA_AGREEMENT]:
             result = check.run(ds, CTX)
-            assert (
-                result.severity is Severity.INFO
-            ), f"{check.id} raised {result.severity} on clean fixture: {result.message}"
+            assert result.severity is Severity.INFO, (
+                f"{check.id} raised {result.severity} on clean fixture: {result.message}"
+            )
 
     def test_v3_clean_1ep(self, tmp_path: Path) -> None:
         build_v3_clean_1ep(tmp_path)

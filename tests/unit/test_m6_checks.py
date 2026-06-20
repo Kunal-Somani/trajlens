@@ -421,9 +421,9 @@ class TestPrecisionRecallVerification:
         # Other M6 checks must not FAIL on this fixture.
         for check_id, sev in results.items():
             if check_id != "SEMANTIC.FEATURE_DIMENSIONALITY":
-                assert (
-                    sev is not Severity.FAIL
-                ), f"{check_id} unexpectedly FAIL on wrong-shape fixture"
+                assert sev is not Severity.FAIL, (
+                    f"{check_id} unexpectedly FAIL on wrong-shape fixture"
+                )
 
     def test_missing_task_only_trips_task_integrity(self, tmp_path: Path) -> None:
         build_v3_missing_task(tmp_path)
@@ -431,9 +431,9 @@ class TestPrecisionRecallVerification:
         assert results["SEMANTIC.TASK_INTEGRITY"] is Severity.FAIL
         for check_id, sev in results.items():
             if check_id != "SEMANTIC.TASK_INTEGRITY":
-                assert (
-                    sev is not Severity.FAIL
-                ), f"{check_id} unexpectedly FAIL on missing-task fixture"
+                assert sev is not Severity.FAIL, (
+                    f"{check_id} unexpectedly FAIL on missing-task fixture"
+                )
 
     def test_no_language_only_trips_language_present(self, tmp_path: Path) -> None:
         build_v3_no_language(tmp_path)
@@ -443,12 +443,12 @@ class TestPrecisionRecallVerification:
         # TASK_INTEGRITY also fires because empty string = bad description.
         for check_id, sev in results.items():
             if check_id not in ("SEMANTIC.LANGUAGE_PRESENT", "SEMANTIC.TASK_INTEGRITY"):
-                assert (
-                    sev is not Severity.FAIL
-                ), f"{check_id} unexpectedly FAIL on no-language fixture"
-                assert (
-                    sev is not Severity.WARN
-                ), f"{check_id} unexpectedly WARN on no-language fixture"
+                assert sev is not Severity.FAIL, (
+                    f"{check_id} unexpectedly FAIL on no-language fixture"
+                )
+                assert sev is not Severity.WARN, (
+                    f"{check_id} unexpectedly WARN on no-language fixture"
+                )
 
     def test_wrong_stats_only_trips_stats_match_data(self, tmp_path: Path) -> None:
         build_v3_with_wrong_stats(tmp_path)
@@ -456,9 +456,9 @@ class TestPrecisionRecallVerification:
         assert results["STATISTICAL.STATS_MATCH_DATA"] is Severity.FAIL
         for check_id, sev in results.items():
             if check_id != "STATISTICAL.STATS_MATCH_DATA":
-                assert (
-                    sev is not Severity.FAIL
-                ), f"{check_id} unexpectedly FAIL on wrong-stats fixture"
+                assert sev is not Severity.FAIL, (
+                    f"{check_id} unexpectedly FAIL on wrong-stats fixture"
+                )
 
     def test_all_nan_action_only_trips_value_sanity(self, tmp_path: Path) -> None:
         build_v3_all_nan_action(tmp_path)
@@ -475,12 +475,12 @@ class TestPrecisionRecallVerification:
         # No other new check should FAIL or WARN on this fixture.
         for check_id, sev in results.items():
             if check_id != "STATISTICAL.VALUE_SANITY":
-                assert (
-                    sev is not Severity.FAIL
-                ), f"{check_id} unexpectedly FAIL on constant-action fixture"
-                assert (
-                    sev is not Severity.WARN
-                ), f"{check_id} unexpectedly WARN on constant-action fixture"
+                assert sev is not Severity.FAIL, (
+                    f"{check_id} unexpectedly FAIL on constant-action fixture"
+                )
+                assert sev is not Severity.WARN, (
+                    f"{check_id} unexpectedly WARN on constant-action fixture"
+                )
 
     def test_wrong_per_episode_stats_only_trips_per_episode_stats(self, tmp_path: Path) -> None:
         build_v3_with_per_episode_stats(tmp_path, corrupt=True)
@@ -488,9 +488,9 @@ class TestPrecisionRecallVerification:
         assert results["STATISTICAL.PER_EPISODE_STATS_MATCH"] is Severity.WARN
         for check_id, sev in results.items():
             if check_id != "STATISTICAL.PER_EPISODE_STATS_MATCH":
-                assert (
-                    sev is not Severity.FAIL
-                ), f"{check_id} unexpectedly FAIL on corrupt-per-episode-stats fixture"
-                assert (
-                    sev is not Severity.WARN
-                ), f"{check_id} unexpectedly WARN on corrupt-per-episode-stats fixture"
+                assert sev is not Severity.FAIL, (
+                    f"{check_id} unexpectedly FAIL on corrupt-per-episode-stats fixture"
+                )
+                assert sev is not Severity.WARN, (
+                    f"{check_id} unexpectedly WARN on corrupt-per-episode-stats fixture"
+                )
