@@ -210,3 +210,149 @@ def build_v2_dataset(
         )
         pq.write_table(frames, data_dir / f"episode_{ep:06d}.parquet")
         (video_dir / f"episode_{ep:06d}.mp4").write_bytes(b"\x00")
+
+
+def build_v3_missing_metadata(root: Path, *, camera: str = "top") -> None:
+    """Build a v3.0 dataset missing meta/tasks.parquet (triggers REQUIRED_METADATA_PRESENT FAIL)."""
+    build_v3_dataset(root, camera=camera)
+    (root / "meta" / "tasks.parquet").unlink()
+
+
+def build_v3_wrong_schema(root: Path, *, camera: str = "top") -> None:
+    """Build a v3.0 dataset where 'timestamp' has the wrong Arrow dtype.
+
+    Triggers SCHEMA_CONSISTENCY FAIL.
+    """
+    build_v3_dataset(root, camera=camera)
+    data_path = root / "data" / "chunk-000" / "file-000.parquet"
+    old = pq.read_table(data_path)
+    n_rows = old.num_rows
+    # Write timestamp as int64 (expected float32) to trigger the dtype mismatch.
+    new = old.set_column(
+        old.schema.get_field_index("timestamp"),
+        "timestamp",
+        pa.array(list(range(n_rows)), type=pa.int64()),
+    )
+    pq.write_table(new, data_path)
+
+
+def build_v3_noncontiguous_indices(root: Path, *, camera: str = "top") -> None:
+    """Build a v3.0 dataset where frame_index is not 0-based within each episode."""
+    build_v3_dataset(root, camera=camera)
+    data_path = root / "data" / "chunk-000" / "file-000.parquet"
+    old = pq.read_table(data_path)
+    shifted = [v + 1 for v in old.column("frame_index").to_pylist()]
+    new = old.set_column(
+        old.schema.get_field_index("frame_index"),
+        "frame_index",
+        pa.array(shifted, type=pa.int64()),
+    )
+    pq.write_table(new, data_path)
+
+
+def build_v3_metadata_data_disagreement(
+    root: Path, *, camera: str = "top", num_episodes: int = 3
+) -> None:
+    """Build a v3.0 dataset where episode metadata from/to boundaries are wrong.
+
+    Replicates the #2401 corruption pattern: metadata claims each episode has
+    FRAMES_PER_EPISODE rows but the declared to_index spans one extra row.
+    """
+    build_v3_dataset(root, num_episodes=num_episodes, camera=camera)
+    episodes_root = root / "meta" / "episodes" / "chunk-000"
+    ep_path = episodes_root / "file-000.parquet"
+    old = pq.read_table(ep_path)
+    to_col = old.column("dataset_to_index").to_pylist()
+    corrupted_to = [v + 1 for v in to_col]
+    new = old.set_column(
+        old.schema.get_field_index("dataset_to_index"),
+        "dataset_to_index",
+        pa.array(corrupted_to, type=pa.int64()),
+    )
+    pq.write_table(new, ep_path)
+
+
+def build_v3_non_monotonic_timestamps(root: Path, *, camera: str = "top") -> None:
+    """Build a v3.0 dataset where timestamps are not strictly increasing within episode 0."""
+    build_v3_dataset(root, camera=camera)
+    data_path = root / "data" / "chunk-000" / "file-000.parquet"
+    old = pq.read_table(data_path)
+    ts = old.column("timestamp").to_pylist()
+    ep = old.column("episode_index").to_pylist()
+    ep0_indices = [i for i, e in enumerate(ep) if e == 0]
+    if len(ep0_indices) >= 2:
+        ts[ep0_indices[1]], ts[ep0_indices[0]] = ts[ep0_indices[0]], ts[ep0_indices[1]]
+    new = old.set_column(
+        old.schema.get_field_index("timestamp"),
+        "timestamp",
+        pa.array(ts, type=pa.float32()),
+    )
+    pq.write_table(new, data_path)
+
+
+def build_v3_bad_timestamp_spacing(
+    root: Path, *, camera: str = "top", gap_multiple: float = 3.0
+) -> None:
+    """Build a v3.0 dataset with a large timestamp gap that exceeds 1 frame duration.
+
+    Triggers TEMPORAL.TIMESTAMP_SPACING FAIL.
+    """
+    build_v3_dataset(root, camera=camera)
+    fps = 30
+    data_path = root / "data" / "chunk-000" / "file-000.parquet"
+    old = pq.read_table(data_path)
+    ts = old.column("timestamp").to_pylist()
+    ep = old.column("episode_index").to_pylist()
+    ep0_indices = [i for i, e in enumerate(ep) if e == 0]
+    if len(ep0_indices) >= 2:
+        gap_s = gap_multiple / fps
+        for j in ep0_indices[1:]:
+            ts[j] = ts[j] + gap_s
+    new = old.set_column(
+        old.schema.get_field_index("timestamp"),
+        "timestamp",
+        pa.array(ts, type=pa.float32()),
+    )
+    pq.write_table(new, data_path)
+
+
+def build_v3_timestamp_drift(
+    root: Path,
+    *,
+    camera: str = "top",
+    num_episodes: int = 5,
+    drift_per_frame: float = 5e-5,
+) -> None:
+    """Build a v3.0 dataset with accumulating timestamp drift (#3177 fingerprint).
+
+    Each frame's timestamp gains an additional ``drift_per_frame`` seconds,
+    causing cumulative drift to exceed the decoder tolerance (1e-4 s).
+    """
+    build_v3_dataset(root, num_episodes=num_episodes, camera=camera)
+    data_path = root / "data" / "chunk-000" / "file-000.parquet"
+    old = pq.read_table(data_path)
+    ts = old.column("timestamp").to_pylist()
+    new_ts = [float(t) + (i * drift_per_frame) for i, t in enumerate(ts)]
+    new = old.set_column(
+        old.schema.get_field_index("timestamp"),
+        "timestamp",
+        pa.array(new_ts, type=pa.float32()),
+    )
+    pq.write_table(new, data_path)
+
+
+def build_v3_missing_shard(root: Path, *, camera: str = "top") -> None:
+    """Build a v3.0 dataset where the data shard is deleted.
+
+    Triggers PATH_TEMPLATE_RESOLVES FAIL.
+    """
+    build_v3_dataset(root, camera=camera)
+    (root / "data" / "chunk-000" / "file-000.parquet").unlink()
+
+
+def build_v3_corrupt_video(root: Path, *, camera: str = "top") -> None:
+    """Build a v3.0 dataset with a corrupt video shard (triggers VIDEO.DECODABLE_SPOTCHECK FAIL)."""
+    build_v3_dataset(root, camera=camera)
+    (root / "videos" / camera / "chunk-000" / "file-000.mp4").write_bytes(
+        b"NOT_A_VALID_MP4_FILE_JUST_GARBAGE_BYTES"
+    )

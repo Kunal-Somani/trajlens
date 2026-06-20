@@ -68,12 +68,72 @@ def lint(
     ] = None,
 ) -> None:
     """Validate a LeRobotDataset and report its quality grade."""
-    # Implemented in M4-M6. Raises NotImplementedError so CI build-smoke test
-    # (`trajlens --version`) passes while `trajlens lint` is correctly not-done.
-    raise NotImplementedError(  # pragma: no cover — stub until M4
-        "trajlens lint is not yet implemented (M4 milestone). "
-        "Run `trajlens --version` to confirm the installation is working."
+    import sys
+
+    from trajlens.checks import CheckContext, CheckEngine, Severity, registry
+    from trajlens.checks.protocol import CheckResult
+    from trajlens.errors import DatasetError
+    from trajlens.model import build_canonical_dataset
+    from trajlens.sources.loader import SourceLoader
+
+    if json_output or report:
+        typer.echo(
+            "ERROR: --json and --report output are M5 scope and not yet implemented. "
+            "Run without those flags for plain terminal output.",
+            err=True,
+        )
+        raise typer.Exit(code=2)
+
+    try:
+        handle = SourceLoader().resolve(ref)
+        ds = build_canonical_dataset(handle)
+    except DatasetError as exc:
+        typer.echo(f"ERROR: Could not load dataset {ref!r}: {exc}", err=True)
+        raise typer.Exit(code=2) from exc
+
+    ctx = CheckContext(deep=deep)
+    engine = CheckEngine(registry)
+    results: list[CheckResult] = engine.run(ds, ctx)
+
+    _severity_symbol = {
+        Severity.ERROR: "✖ ERROR",
+        Severity.FAIL: "✖ FAIL ",
+        Severity.WARN: "⚠ WARN ",
+        Severity.INFO: "✔ INFO ",
+    }
+
+    typer.echo(f"\ntrajlens lint: {ref}")
+    typer.echo(f"  version : {ds.version.value}")
+    typer.echo(f"  episodes: {ds.num_episodes}")
+    typer.echo(f"  frames  : {ds.num_frames}")
+    typer.echo("")
+
+    counts: dict[Severity, int] = dict.fromkeys(Severity, 0)
+    for result in results:
+        counts[result.severity] += 1
+        sym = _severity_symbol[result.severity]
+        typer.echo(f"  {sym}  {result.check_id}")
+        typer.echo(f"           {result.message}")
+
+    typer.echo("")
+    typer.echo(
+        f"  Summary: {counts[Severity.FAIL]} FAIL, {counts[Severity.WARN]} WARN, "
+        f"{counts[Severity.ERROR]} ERROR, {counts[Severity.INFO]} INFO"
     )
+
+    worst = max((r.severity for r in results), default=Severity.INFO)
+    if worst >= Severity.ERROR:
+        typer.echo("  Grade  : ERROR (checks could not evaluate)")
+        sys.exit(3)
+    elif worst >= Severity.FAIL:
+        typer.echo("  Grade  : FAIL (unsafe to train on)")
+        sys.exit(1)
+    elif worst >= Severity.WARN:
+        typer.echo("  Grade  : WARN (usable with caution)")
+        sys.exit(0)
+    else:
+        typer.echo("  Grade  : PASS")
+        sys.exit(0)
 
 
 @app.command()
