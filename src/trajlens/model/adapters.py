@@ -273,6 +273,12 @@ class _V2Resolver:
 
 
 def _build_v2(handle: SourceHandle) -> CanonicalDataset:
+    if handle.repo_id is not None:
+        raise DatasetFormatError(
+            "v2.x Hub datasets cannot be lazily streamed. Shard paths are implicit and "
+            "require a local filesystem to glob. Download the dataset locally to verify it."
+        )
+
     features = _parse_features(dict(handle.info.features))
     cameras = _camera_keys(features)
     task_table = _load_v2_task_table(handle)
