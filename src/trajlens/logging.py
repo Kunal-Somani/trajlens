@@ -67,7 +67,6 @@ def configure_logging(*, level: str = "WARNING", force_plain: bool = False) -> N
 
     shared_processors: list[Any] = [
         structlog.stdlib.add_log_level,
-        structlog.stdlib.add_logger_name,
         structlog.processors.TimeStamper(fmt="iso"),
         _redact_secrets,  # must run before any renderer
         structlog.processors.StackInfoRenderer(),
