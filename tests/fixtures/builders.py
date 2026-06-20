@@ -210,3 +210,193 @@ def build_v2_dataset(
         )
         pq.write_table(frames, data_dir / f"episode_{ep:06d}.parquet")
         (video_dir / f"episode_{ep:06d}.mp4").write_bytes(b"\x00")
+
+
+def build_v3_wrong_schema(root: Path, *, camera: str = "top") -> None:
+    """Build a v3.0 dataset where 'timestamp' has the wrong Arrow dtype.
+
+    Triggers SCHEMA_CONSISTENCY FAIL.
+    """
+    build_v3_dataset(root, camera=camera)
+    data_path = root / "data" / "chunk-000" / "file-000.parquet"
+    old = pq.read_table(data_path)
+    n_rows = old.num_rows
+    # Write timestamp as int64 (expected float32) to trigger the dtype mismatch.
+    new = old.set_column(
+        old.schema.get_field_index("timestamp"),
+        "timestamp",
+        pa.array(list(range(n_rows)), type=pa.int64()),
+    )
+    pq.write_table(new, data_path)
+
+
+def build_v3_noncontiguous_indices(root: Path, *, camera: str = "top") -> None:
+    """Build a v3.0 dataset where frame_index is not 0-based within each episode."""
+    build_v3_dataset(root, camera=camera)
+    data_path = root / "data" / "chunk-000" / "file-000.parquet"
+    old = pq.read_table(data_path)
+    shifted = [v + 1 for v in old.column("frame_index").to_pylist()]
+    new = old.set_column(
+        old.schema.get_field_index("frame_index"),
+        "frame_index",
+        pa.array(shifted, type=pa.int64()),
+    )
+    pq.write_table(new, data_path)
+
+
+def build_v3_metadata_data_disagreement(
+    root: Path, *, camera: str = "top", num_episodes: int = 3
+) -> None:
+    """Build a v3.0 dataset where episode metadata from/to boundaries are wrong.
+
+    Replicates the #2401 corruption pattern: metadata claims each episode has
+    FRAMES_PER_EPISODE rows but the declared to_index spans one extra row.
+    """
+    build_v3_dataset(root, num_episodes=num_episodes, camera=camera)
+    episodes_root = root / "meta" / "episodes" / "chunk-000"
+    ep_path = episodes_root / "file-000.parquet"
+    old = pq.read_table(ep_path)
+    to_col = old.column("dataset_to_index").to_pylist()
+    corrupted_to = [v + 1 for v in to_col]
+    new = old.set_column(
+        old.schema.get_field_index("dataset_to_index"),
+        "dataset_to_index",
+        pa.array(corrupted_to, type=pa.int64()),
+    )
+    pq.write_table(new, ep_path)
+
+
+def build_v3_non_monotonic_timestamps(root: Path, *, camera: str = "top") -> None:
+    """Build a v3.0 dataset where timestamps are not strictly increasing within episode 0."""
+    build_v3_dataset(root, camera=camera)
+    data_path = root / "data" / "chunk-000" / "file-000.parquet"
+    old = pq.read_table(data_path)
+    ts = old.column("timestamp").to_pylist()
+    ep = old.column("episode_index").to_pylist()
+    ep0_indices = [i for i, e in enumerate(ep) if e == 0]
+    if len(ep0_indices) >= 2:
+        ts[ep0_indices[1]], ts[ep0_indices[0]] = ts[ep0_indices[0]], ts[ep0_indices[1]]
+    new = old.set_column(
+        old.schema.get_field_index("timestamp"),
+        "timestamp",
+        pa.array(ts, type=pa.float32()),
+    )
+    pq.write_table(new, data_path)
+
+
+def build_v3_bad_timestamp_spacing(
+    root: Path, *, camera: str = "top", gap_multiple: float = 3.0
+) -> None:
+    """Build a v3.0 dataset with a large timestamp gap that exceeds 1 frame duration.
+
+    Triggers TEMPORAL.TIMESTAMP_SPACING FAIL.
+    """
+    build_v3_dataset(root, camera=camera)
+    fps = 30
+    data_path = root / "data" / "chunk-000" / "file-000.parquet"
+    old = pq.read_table(data_path)
+    ts = old.column("timestamp").to_pylist()
+    ep = old.column("episode_index").to_pylist()
+    ep0_indices = [i for i, e in enumerate(ep) if e == 0]
+    if len(ep0_indices) >= 2:
+        gap_s = gap_multiple / fps
+        for j in ep0_indices[1:]:
+            ts[j] = ts[j] + gap_s
+    new = old.set_column(
+        old.schema.get_field_index("timestamp"),
+        "timestamp",
+        pa.array(ts, type=pa.float32()),
+    )
+    pq.write_table(new, data_path)
+
+
+def build_v3_timestamp_drift(
+    root: Path,
+    *,
+    camera: str = "top",
+    num_episodes: int = 5,
+    drift_per_frame: float = 5e-5,
+) -> None:
+    """Build a v3.0 dataset with accumulating timestamp drift (#3177 fingerprint).
+
+    Each frame's timestamp gains an additional ``drift_per_frame`` seconds,
+    causing cumulative drift to exceed the decoder tolerance (1e-4 s).
+    """
+    build_v3_dataset(root, num_episodes=num_episodes, camera=camera)
+    data_path = root / "data" / "chunk-000" / "file-000.parquet"
+    old = pq.read_table(data_path)
+    ts = old.column("timestamp").to_pylist()
+    new_ts = [float(t) + (i * drift_per_frame) for i, t in enumerate(ts)]
+    new = old.set_column(
+        old.schema.get_field_index("timestamp"),
+        "timestamp",
+        pa.array(new_ts, type=pa.float32()),
+    )
+    pq.write_table(new, data_path)
+
+
+def build_v3_missing_shard(root: Path, *, camera: str = "top") -> None:
+    """Build a v3.0 dataset where the data shard is deleted.
+
+    Triggers PATH_TEMPLATE_RESOLVES FAIL.
+    """
+    build_v3_dataset(root, camera=camera)
+    (root / "data" / "chunk-000" / "file-000.parquet").unlink()
+
+
+def build_v3_corrupt_video(root: Path, *, camera: str = "top") -> None:
+    """Build a v3.0 dataset with a corrupt video shard (triggers VIDEO.DECODABLE_SPOTCHECK FAIL)."""
+    build_v3_dataset(root, camera=camera)
+    (root / "videos" / camera / "chunk-000" / "file-000.mp4").write_bytes(
+        b"NOT_A_VALID_MP4_FILE_JUST_GARBAGE_BYTES"
+    )
+
+
+def _write_real_mp4(path: Path, *, num_frames: int = 5, fps: int = 30) -> None:
+    """Write a minimal but genuinely decodable MP4 using PyAV.
+
+    Produces ``num_frames`` solid-colour frames at 16x16 (the smallest
+    even resolution yuv420p accepts) encoded with libx264/ultrafast.
+    No numpy: the RGB frame buffer is filled via ctypes.
+
+    Codec choice mirrors LeRobot's default encoder
+    (lerobot/datasets/video_utils.py encode_video_frames → libx264).
+    """
+    import ctypes
+
+    import av
+
+    with av.open(str(path), mode="w") as container:
+        stream = container.add_stream("libx264", rate=fps)
+        stream.width = 16
+        stream.height = 16
+        stream.pix_fmt = "yuv420p"
+        stream.options = {"crf": "23", "preset": "ultrafast"}
+        for i in range(num_frames):
+            frame = av.VideoFrame(16, 16, "rgb24")
+            frame.pts = i
+            # Solid blue, varying slightly per frame so the encoder doesn't
+            # collapse to a single I-frame and skip decoding.
+            blue = min(255, 80 + i * 30)
+            buf = (ctypes.c_uint8 * (16 * 16 * 3))()
+            for j in range(16 * 16):
+                buf[j * 3] = 0
+                buf[j * 3 + 1] = 0
+                buf[j * 3 + 2] = blue
+            frame.planes[0].update(bytes(buf))
+            for packet in stream.encode(frame):
+                container.mux(packet)
+        for packet in stream.encode():
+            container.mux(packet)
+
+
+def build_v3_real_video(root: Path, *, camera: str = "top") -> None:
+    """Build a v3.0 dataset with a genuinely decodable MP4 video shard.
+
+    Replaces the placeholder b'\\x00' stub written by build_v3_dataset with
+    a real libx264-encoded MP4 that PyAV can open and decode.  Used to
+    exercise VIDEO.DECODABLE_SPOTCHECK's success path.
+    """
+    build_v3_dataset(root, camera=camera)
+    video_path = root / "videos" / camera / "chunk-000" / "file-000.mp4"
+    _write_real_mp4(video_path)
