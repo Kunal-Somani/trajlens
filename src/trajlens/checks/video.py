@@ -89,6 +89,25 @@ class _DecodableSpotcheckCheck:
     def run(self, ds: CanonicalDataset, ctx: CheckContext) -> CheckResult:
         failures: list[str] = []
 
+        # T11: Remote HTTP stream fallback. PyAV streaming without --deep seeks
+        # over HTTP which can be slow or unreliable. Fail closed (skip gracefully).
+        if not ctx.deep:
+            for camera in ds.cameras:
+                for episode in list(ds)[:1]:
+                    try:
+                        seg = ds.video_segment_for_episode(episode, camera)
+                        if not seg.handle.is_local:
+                            return CheckResult(
+                                check_id=self.id,
+                                severity=Severity.INFO,
+                                message=(
+                                    "Skipped VIDEO.DECODABLE_SPOTCHECK for Hub dataset "
+                                    "(too slow over HTTP). Use --deep to verify video."
+                                ),
+                            )
+                    except Exception as exc:
+                        log.debug("failed_to_resolve_segment_for_skip_check", error=str(exc))
+
         positions = ["first", "middle", "last"]
 
         for camera in ds.cameras:
@@ -113,8 +132,12 @@ class _DecodableSpotcheckCheck:
                 for pos in positions:
                     err = _decode_frame_at_position(shard_path, pos)
                     if err is not None:
+                        if seg.handle.is_local:
+                            shard_name = getattr(seg.handle.path, "name", str(seg.handle.path))
+                        else:
+                            shard_name = str(seg.handle.path).split("/")[-1]
                         failures.append(
-                            f"Camera {camera!r} shard {seg.handle.path.name!r} {pos} frame: {err}"
+                            f"Camera {camera!r} shard {shard_name!r} {pos} frame: {err}"
                         )
 
                 if len(failures) >= 10:

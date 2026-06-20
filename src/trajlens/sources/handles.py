@@ -31,7 +31,11 @@ def open_parquet_shard(path: Path) -> pq.ParquetFile:
 class VideoShardHandle:
     """A handle to a video shard file. No decode happens at this layer."""
 
-    path: Path
+    path: Path | str
+
+    @property
+    def is_local(self) -> bool:
+        return isinstance(self.path, Path)
 
 
 def open_video_shard(path: Path) -> VideoShardHandle:
@@ -39,3 +43,31 @@ def open_video_shard(path: Path) -> VideoShardHandle:
     if not path.is_file():
         raise DatasetFormatError(f"expected video shard not found: {path}")
     return VideoShardHandle(path=path)
+
+
+def open_hub_parquet_shard(repo_id: str, revision: str | None, path: str) -> pq.ParquetFile:
+    """Open a Parquet shard lazily over HTTP from the Hugging Face Hub."""
+    try:
+        from huggingface_hub import HfFileSystem
+    except ImportError as exc:
+        raise DatasetFormatError("huggingface_hub is required to load Hub datasets") from exc
+
+    fs = HfFileSystem(revision=revision)
+    try:
+        f = fs.open(f"datasets/{repo_id}/{path}", "rb")
+        return pq.ParquetFile(f)  # type: ignore[no-untyped-call]
+    except Exception as exc:
+        raise DatasetFormatError(
+            f"expected parquet shard not found on Hub: {repo_id}/{path}"
+        ) from exc
+
+
+def open_hub_video_shard(repo_id: str, revision: str | None, path: str) -> VideoShardHandle:
+    """Return an HTTP URL handle to a video shard on the Hugging Face Hub."""
+    try:
+        from huggingface_hub import hf_hub_url
+    except ImportError as exc:
+        raise DatasetFormatError("huggingface_hub is required to load Hub datasets") from exc
+
+    url = hf_hub_url(repo_id, filename=path, repo_type="dataset", revision=revision)
+    return VideoShardHandle(path=url)

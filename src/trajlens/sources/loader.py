@@ -32,14 +32,26 @@ class SourceHandle:
     root: Path
     version: DatasetVersion
     info: DatasetInfoModel
+    repo_id: str | None = None
+    revision: str | None = None
 
     def parquet_shard(self, *relative_parts: str) -> pq.ParquetFile:
         """Open a Parquet shard by path relative to the dataset root, safely joined."""
+        if self.repo_id is not None:
+            path_str = "/".join(relative_parts)
+            from trajlens.sources.handles import open_hub_parquet_shard
+
+            return open_hub_parquet_shard(self.repo_id, self.revision, path_str)
         path = safe_join(self.root, *relative_parts)
         return open_parquet_shard(path)
 
     def video_shard(self, *relative_parts: str) -> VideoShardHandle:
         """Open a video shard handle by path relative to the dataset root, safely joined."""
+        if self.repo_id is not None:
+            path_str = "/".join(relative_parts)
+            from trajlens.sources.handles import open_hub_video_shard
+
+            return open_hub_video_shard(self.repo_id, self.revision, path_str)
         path = safe_join(self.root, *relative_parts)
         return open_video_shard(path)
 
@@ -54,7 +66,12 @@ class SourceLoader:
         directory nor a reachable Hub dataset repo.
         """
         candidate = Path(ref)
-        root = candidate.resolve() if candidate.is_dir() else self._resolve_hub(ref, revision)
+        if candidate.is_dir():
+            root = candidate.resolve()
+            repo_id = None
+        else:
+            root = self._resolve_hub(ref, revision)
+            repo_id = ref
 
         info = load_info(root)
         version = detect_version(root, info)
@@ -68,11 +85,13 @@ class SourceLoader:
                 info.total_frames, max_value=MAX_DECLARED_FRAMES, what="frame count"
             )
 
-        return SourceHandle(root=root, version=version, info=info)
+        return SourceHandle(
+            root=root, version=version, info=info, repo_id=repo_id, revision=revision
+        )
 
     def _resolve_hub(self, repo_id: str, revision: str | None) -> Path:
         try:
-            from huggingface_hub import snapshot_download
+            from huggingface_hub import HfApi, RepoFile, hf_hub_download
         except ImportError as exc:
             raise SourceResolutionError(
                 f"{repo_id!r} is not a local path, and the optional Hub "
@@ -97,17 +116,27 @@ class SourceLoader:
             # Resolving only needs meta/ to detect version and parse info.json;
             # data/video shards are fetched lazily when actually opened. Mirrors
             # lerobot's own metadata-only pull (dataset_metadata.py _pull_from_repo).
-            snapshot_path = snapshot_download(
+            api = HfApi()
+            tree = api.list_repo_tree(
                 repo_id=repo_id,
                 repo_type="dataset",
                 revision=revision,
-                allow_patterns="meta/",
-                local_dir=local_dir,
+                path_in_repo="meta",
+                recursive=True,
             )
+            meta_files = [item.path for item in tree if isinstance(item, RepoFile)]
+            for f in meta_files:
+                hf_hub_download(
+                    repo_id=repo_id,
+                    filename=f,
+                    repo_type="dataset",
+                    revision=revision,
+                    local_dir=local_dir,
+                )
         except Exception as exc:
             raise SourceResolutionError(
                 f"could not resolve {repo_id!r}: it is not a local directory "
                 f"and could not be downloaded from the Hugging Face Hub "
                 f"({exc})."
             ) from exc
-        return Path(snapshot_path)
+        return local_dir

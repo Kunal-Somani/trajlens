@@ -346,7 +346,7 @@ class _PathTemplateResolvesCheck:
             for camera in ds.cameras:
                 try:
                     seg = ds.video_segment_for_episode(episode, camera)
-                    if not seg.handle.path.is_file():
+                    if seg.handle.is_local and not seg.handle.path.is_file():  # type: ignore[union-attr]
                         missing.append(
                             f"Episode {episode.episode_index} video shard "
                             f"({camera}): {seg.handle.path}"
