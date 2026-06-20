@@ -25,7 +25,6 @@ Severity mapping to SARIF levels:
 from __future__ import annotations
 
 import json
-from pathlib import Path
 
 import trajlens
 from trajlens.checks.protocol import CheckResult, Severity
@@ -75,13 +74,12 @@ def render_sarif(
         for rule_id in seen_rule_ids
     ]
 
-    # Dataset root URI for location mapping.  For Hub refs without a local
-    # path, use "dataset://<ref>" as a synthetic URI so SARIF remains valid.
-    dataset_path = Path(ref)
-    if dataset_path.is_dir():
-        location_uri = dataset_path.resolve().as_uri() + "/"
-    else:
-        location_uri = f"dataset://{ref}/"
+    # We use the dataset ref directly as the location URI. For Hugging Face Hub
+    # datasets (e.g. "lerobot/pusht"), this acts as a stable relative URI-reference
+    # that displays cleanly in the GitHub Code Scanning UI. If we resolved this to
+    # an absolute file:// path on the ephemeral CI runner, it would be meaningless
+    # to a human reviewing the alert.
+    location_uri = ref
 
     sarif_results = [
         {
