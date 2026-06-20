@@ -13,6 +13,8 @@ Public surface:
 """
 
 # Import check modules so their @registry.register decorators fire.
+import trajlens.checks.semantic
+import trajlens.checks.statistical
 import trajlens.checks.structural
 import trajlens.checks.temporal
 import trajlens.checks.video  # noqa: F401
