@@ -29,6 +29,8 @@ classifiers = [
 # typer: type-hint native CLI, clean help, testable (02 §4)
 # structlog: structured logging with redaction support (05 §3)
 # numpy: numerical checks (stats recomputation, timestamp math)
+# rich: color-coded terminal output and check-count table in report/terminal.py;
+#   already a transitive dep via typer, declared directly because we call its API
 dependencies = [
     "pyarrow>=19.0,<25",
     "av>=12.0,<18",
@@ -36,6 +38,7 @@ dependencies = [
     "typer>=0.12,<1",
     "structlog>=24.0,<27",
     "numpy>=1.26,<3",
+    "rich>=13.0,<16",
 ]
 
 [project.optional-dependencies]
