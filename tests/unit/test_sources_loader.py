@@ -103,8 +103,8 @@ class TestResolveHubMocked:
         ]
 
         with (
-            patch("huggingface_hub.HfApi.list_repo_tree", return_value=mock_files),
-            patch("huggingface_hub.hf_hub_download", side_effect=mock_download),
+            patch("huggingface_hub.HfApi.list_repo_tree", return_value=mock_files) as mock_list,
+            patch("huggingface_hub.hf_hub_download", side_effect=mock_download) as mock_dl,
         ):
             handle = SourceLoader().resolve("org/fake-repo")
 
@@ -112,6 +112,18 @@ class TestResolveHubMocked:
         assert handle.root.name == "main"
         assert handle.root.parent.name == "org--fake-repo"
         assert handle.version is DatasetVersion.V3_0
+
+        mock_list.assert_called_once_with(
+            repo_id="org/fake-repo",
+            repo_type="dataset",
+            revision=None,
+            path_in_repo="meta",
+            recursive=True,
+        )
+        assert mock_dl.call_count == len(mock_files)
+        called_files = [call.kwargs.get("filename") for call in mock_dl.call_args_list]
+        expected_files = [m.path for m in mock_files]
+        assert sorted(called_files) == sorted(expected_files)
 
 
 class TestSourceHandleShardAccess:
