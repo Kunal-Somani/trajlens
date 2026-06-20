@@ -40,7 +40,7 @@ dependencies = [
 
 [project.optional-dependencies]
 # [hub] is optional — trajlens works fully on local datasets without it
-hub = ["huggingface_hub>=0.23,<1"]
+hub = ["huggingface_hub>=0.23,<2"]
 dev = [
     "pytest>=8.0,<10",
     "pytest-cov>=5.0,<8",
@@ -49,7 +49,7 @@ dev = [
     "ruff>=0.4,<1",
     # needed at dev/test time to mock Hub resolution and run the opt-in
     # integration test (05 §7 lists huggingface_hub as part of the core set)
-    "huggingface_hub>=0.23,<1",
+    "huggingface_hub>=0.23,<2",
     "pre-commit>=3.7,<5",
     "pip-audit>=2.7,<3",
     # types stubs
