@@ -212,12 +212,6 @@ def build_v2_dataset(
         (video_dir / f"episode_{ep:06d}.mp4").write_bytes(b"\x00")
 
 
-def build_v3_missing_metadata(root: Path, *, camera: str = "top") -> None:
-    """Build a v3.0 dataset missing meta/tasks.parquet (triggers REQUIRED_METADATA_PRESENT FAIL)."""
-    build_v3_dataset(root, camera=camera)
-    (root / "meta" / "tasks.parquet").unlink()
-
-
 def build_v3_wrong_schema(root: Path, *, camera: str = "top") -> None:
     """Build a v3.0 dataset where 'timestamp' has the wrong Arrow dtype.
 
@@ -356,3 +350,53 @@ def build_v3_corrupt_video(root: Path, *, camera: str = "top") -> None:
     (root / "videos" / camera / "chunk-000" / "file-000.mp4").write_bytes(
         b"NOT_A_VALID_MP4_FILE_JUST_GARBAGE_BYTES"
     )
+
+
+def _write_real_mp4(path: Path, *, num_frames: int = 5, fps: int = 30) -> None:
+    """Write a minimal but genuinely decodable MP4 using PyAV.
+
+    Produces ``num_frames`` solid-colour frames at 16x16 (the smallest
+    even resolution yuv420p accepts) encoded with libx264/ultrafast.
+    No numpy: the RGB frame buffer is filled via ctypes.
+
+    Codec choice mirrors LeRobot's default encoder
+    (lerobot/datasets/video_utils.py encode_video_frames → libx264).
+    """
+    import ctypes
+
+    import av
+
+    with av.open(str(path), mode="w") as container:
+        stream = container.add_stream("libx264", rate=fps)
+        stream.width = 16
+        stream.height = 16
+        stream.pix_fmt = "yuv420p"
+        stream.options = {"crf": "23", "preset": "ultrafast"}
+        for i in range(num_frames):
+            frame = av.VideoFrame(16, 16, "rgb24")
+            frame.pts = i
+            # Solid blue, varying slightly per frame so the encoder doesn't
+            # collapse to a single I-frame and skip decoding.
+            blue = min(255, 80 + i * 30)
+            buf = (ctypes.c_uint8 * (16 * 16 * 3))()
+            for j in range(16 * 16):
+                buf[j * 3] = 0
+                buf[j * 3 + 1] = 0
+                buf[j * 3 + 2] = blue
+            frame.planes[0].update(bytes(buf))
+            for packet in stream.encode(frame):
+                container.mux(packet)
+        for packet in stream.encode():
+            container.mux(packet)
+
+
+def build_v3_real_video(root: Path, *, camera: str = "top") -> None:
+    """Build a v3.0 dataset with a genuinely decodable MP4 video shard.
+
+    Replaces the placeholder b'\\x00' stub written by build_v3_dataset with
+    a real libx264-encoded MP4 that PyAV can open and decode.  Used to
+    exercise VIDEO.DECODABLE_SPOTCHECK's success path.
+    """
+    build_v3_dataset(root, camera=camera)
+    video_path = root / "videos" / camera / "chunk-000" / "file-000.mp4"
+    _write_real_mp4(video_path)

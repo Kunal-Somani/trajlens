@@ -1,14 +1,23 @@
 """STRUCTURAL checks (04_CHECK_CATALOG.md §STRUCTURAL).
 
-All six STRUCTURAL checks are implemented here and registered at module load
+All five STRUCTURAL checks are implemented here and registered at module load
 time via the singleton registry from checks/registry.py.
 
-  STRUCTURAL.VERSION_DETECTED         (INFO)
-  STRUCTURAL.REQUIRED_METADATA_PRESENT (FAIL)
-  STRUCTURAL.SCHEMA_CONSISTENCY        (FAIL)
-  STRUCTURAL.INDEX_CONTINUITY          (FAIL)
-  STRUCTURAL.METADATA_DATA_AGREEMENT   (FAIL) — catches #2401 corruption
-  STRUCTURAL.PATH_TEMPLATE_RESOLVES    (FAIL)
+  STRUCTURAL.VERSION_DETECTED        (INFO)
+  STRUCTURAL.SCHEMA_CONSISTENCY       (FAIL)
+  STRUCTURAL.INDEX_CONTINUITY         (FAIL)
+  STRUCTURAL.METADATA_DATA_AGREEMENT  (FAIL) — catches #2401 corruption
+  STRUCTURAL.PATH_TEMPLATE_RESOLVES   (FAIL)
+
+Note: REQUIRED_METADATA_PRESENT is intentionally absent.  Every metadata
+file it would check is already hard-required by the load pipeline:
+  - meta/info.json         → sources/loader.py   load_info()
+  - meta/episodes.jsonl    → sources/version.py  detect_version()
+  - meta/episodes/ (dir)   → sources/version.py  detect_version()
+  - meta/tasks.jsonl (v2)  → model/adapters.py   _load_v2_task_table()
+  - meta/tasks.parquet(v3) → model/adapters.py   _load_v3_task_table()
+If any is absent, build_canonical_dataset() raises DatasetFormatError before
+a CanonicalDataset is returned, so the engine never runs.  See 04_CHECK_CATALOG.md.
 """
 
 from __future__ import annotations
@@ -20,7 +29,6 @@ from trajlens.checks.protocol import Check, CheckContext, CheckResult, Severity
 from trajlens.checks.registry import registry
 from trajlens.model.canonical import CanonicalDataset
 from trajlens.sources.paths import safe_join
-from trajlens.sources.version import DatasetVersion
 
 log = structlog.get_logger(__name__)
 
@@ -48,65 +56,6 @@ class _VersionDetectedCheck:
 
 VERSION_DETECTED: Check = _VersionDetectedCheck()
 registry.register(VERSION_DETECTED)
-
-
-# ---------------------------------------------------------------------------
-# STRUCTURAL.REQUIRED_METADATA_PRESENT
-# ---------------------------------------------------------------------------
-
-# Files/dirs required per version.  Each entry is (path_parts, is_dir, versions_it_applies_to).
-_V3_REQUIRED: list[tuple[tuple[str, ...], bool]] = [
-    (("meta", "info.json"), False),
-    (("meta", "tasks.parquet"), False),
-    (("meta", "episodes"), True),
-]
-_V2_REQUIRED: list[tuple[tuple[str, ...], bool]] = [
-    (("meta", "info.json"), False),
-    (("meta", "episodes.jsonl"), False),
-    (("meta", "tasks.jsonl"), False),
-]
-
-
-class _RequiredMetadataPresentCheck:
-    id = "STRUCTURAL.REQUIRED_METADATA_PRESENT"
-    severity = Severity.FAIL
-    category = "STRUCTURAL"
-    requires_video = False
-
-    def run(self, ds: CanonicalDataset, ctx: CheckContext) -> CheckResult:
-        # We need the dataset root to stat files.  The CanonicalDataset carries
-        # a stats handle whose root is the dataset root — safe to access here.
-        root = ds.stats.root
-
-        required = _V3_REQUIRED if ds.version is DatasetVersion.V3_0 else _V2_REQUIRED
-        missing: list[str] = []
-
-        for path_parts, is_dir in required:
-            try:
-                resolved = safe_join(root, *path_parts)
-            except Exception:
-                missing.append("/".join(path_parts))
-                continue
-            exists = resolved.is_dir() if is_dir else resolved.is_file()
-            if not exists:
-                missing.append("/".join(path_parts))
-
-        if missing:
-            return CheckResult(
-                check_id=self.id,
-                severity=Severity.FAIL,
-                message=f"Required metadata missing: {', '.join(missing)}",
-                details={"missing": missing},
-            )
-        return CheckResult(
-            check_id=self.id,
-            severity=Severity.INFO,
-            message="All required metadata files are present.",
-        )
-
-
-REQUIRED_METADATA_PRESENT: Check = _RequiredMetadataPresentCheck()
-registry.register(REQUIRED_METADATA_PRESENT)
 
 
 # ---------------------------------------------------------------------------

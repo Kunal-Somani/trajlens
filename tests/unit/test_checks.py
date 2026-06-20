@@ -23,6 +23,7 @@ from tests.fixtures.builders import (
     build_v3_missing_shard,
     build_v3_non_monotonic_timestamps,
     build_v3_noncontiguous_indices,
+    build_v3_real_video,
     build_v3_timestamp_drift,
     build_v3_wrong_schema,
 )
@@ -33,7 +34,6 @@ from trajlens.checks.structural import (
     INDEX_CONTINUITY,
     METADATA_DATA_AGREEMENT,
     PATH_TEMPLATE_RESOLVES,
-    REQUIRED_METADATA_PRESENT,
     SCHEMA_CONSISTENCY,
     VERSION_DETECTED,
 )
@@ -285,33 +285,6 @@ class TestVersionDetected:
     def test_zero_episodes(self, tmp_path: Path) -> None:
         build_v3_dataset(tmp_path, num_episodes=0)
         result = VERSION_DETECTED.run(_load(tmp_path), CTX)
-        assert result.severity is Severity.INFO
-
-
-# ---------------------------------------------------------------------------
-# STRUCTURAL.REQUIRED_METADATA_PRESENT
-# ---------------------------------------------------------------------------
-
-
-class TestRequiredMetadataPresent:
-    def test_clean_passes(self, tmp_path: Path) -> None:
-        build_v3_dataset(tmp_path)
-        result = REQUIRED_METADATA_PRESENT.run(_load(tmp_path), CTX)
-        assert result.severity is Severity.INFO
-
-    def test_missing_tasks_parquet_fails(self, tmp_path: Path) -> None:
-        # Load the dataset first so build_canonical_dataset succeeds, then
-        # delete tasks.parquet so the check's file-presence assertion fires.
-        build_v3_dataset(tmp_path)
-        ds = _load(tmp_path)
-        (tmp_path / "meta" / "tasks.parquet").unlink()
-        result = REQUIRED_METADATA_PRESENT.run(ds, CTX)
-        assert result.severity is Severity.FAIL
-        assert "tasks.parquet" in result.message
-
-    def test_v2_clean_passes(self, tmp_path: Path) -> None:
-        build_v2_dataset(tmp_path)
-        result = REQUIRED_METADATA_PRESENT.run(_load(tmp_path), CTX)
         assert result.severity is Severity.INFO
 
 
@@ -623,13 +596,15 @@ class TestDecodableSpotcheck:
         assert result.severity is Severity.FAIL
         assert len(result.details["failures"]) >= 1
 
-    def test_clean_stub_video_passes(self, tmp_path: Path) -> None:
-        """Tiny stub MP4 (just null bytes) — PyAV may or may not decode it.
-        The check should not crash either way (ADR-003 boundary test)."""
-        build_v3_dataset(tmp_path)
-        # The stub MP4 is b"\x00" — PyAV will likely fail to decode it.
-        # The important assertion is that the check returns a CheckResult,
-        # not an unhandled exception.
+    def test_real_video_passes(self, tmp_path: Path) -> None:
+        """Success path: a genuinely decodable MP4 must yield INFO.
+
+        This exercises _decode_frame_at_position through its full decode loop
+        (av.open → stream → decode), not just the exception handler.
+        build_v3_real_video writes a real libx264-encoded shard; PyAV can
+        open it and yield frames, so all three spot-check positions succeed.
+        """
+        build_v3_real_video(tmp_path)
         result = DECODABLE_SPOTCHECK.run(_load(tmp_path), CTX)
-        assert isinstance(result, CheckResult)
-        assert result.severity in (Severity.FAIL, Severity.INFO)
+        assert result.severity is Severity.INFO
+        assert "successfully" in result.message
