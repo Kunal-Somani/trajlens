@@ -132,6 +132,21 @@ class _StatsMatchDataCheck:
     requires_video = False
 
     def run(self, ds: CanonicalDataset, ctx: CheckContext) -> CheckResult:
+        resolver_handle = getattr(ds._resolver, "handle", None)
+        if (
+            not ctx.deep
+            and resolver_handle is not None
+            and getattr(resolver_handle, "repo_id", None) is not None
+        ):
+            return CheckResult(
+                check_id=self.id,
+                severity=Severity.INFO,
+                message=(
+                    "Skipped STATISTICAL.STATS_MATCH_DATA for Hub dataset "
+                    "(too slow over HTTP). Use --deep to verify stats."
+                ),
+            )
+
         stored_stats = ds.stats.load()
 
         if stored_stats is None:
@@ -245,6 +260,21 @@ class _PerEpisodeStatsMatchCheck:
     requires_video = False
 
     def run(self, ds: CanonicalDataset, ctx: CheckContext) -> CheckResult:
+        resolver_handle = getattr(ds._resolver, "handle", None)
+        if (
+            not ctx.deep
+            and resolver_handle is not None
+            and getattr(resolver_handle, "repo_id", None) is not None
+        ):
+            return CheckResult(
+                check_id=self.id,
+                severity=Severity.INFO,
+                message=(
+                    "Skipped STATISTICAL.PER_EPISODE_STATS_MATCH for Hub dataset "
+                    "(too slow over HTTP). Use --deep to verify stats."
+                ),
+            )
+
         from trajlens.sources.version import DatasetVersion
 
         if ds.version is DatasetVersion.V2_0:
@@ -470,6 +500,21 @@ class _ValueSanityCheck:
     requires_video = False
 
     def run(self, ds: CanonicalDataset, ctx: CheckContext) -> CheckResult:
+        resolver_handle = getattr(ds._resolver, "handle", None)
+        if (
+            not ctx.deep
+            and resolver_handle is not None
+            and getattr(resolver_handle, "repo_id", None) is not None
+        ):
+            return CheckResult(
+                check_id=self.id,
+                severity=Severity.INFO,
+                message=(
+                    "Skipped STATISTICAL.VALUE_SANITY for Hub dataset "
+                    "(too slow over HTTP). Use --deep to verify stats."
+                ),
+            )
+
         fail_items: list[str] = []
         warn_items: list[str] = []
 

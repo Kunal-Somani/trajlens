@@ -255,12 +255,22 @@ class _V2Resolver:
     fps: int
 
     def parquet_shard(self, episode: EpisodeRecord) -> pq.ParquetFile:
+        if self.handle.repo_id is not None:
+            raise DatasetFormatError(
+                "v2.x Hub datasets cannot be lazily streamed without a local download. "
+                "Run with --deep to verify this dataset."
+            )
         filename = f"episode_{episode.episode_index:06d}.parquet"
         matches = sorted(self.handle.root.glob(f"data/chunk-*/{filename}"))
         path = _expect_one_match(matches, what=f"data shard {filename}")
         return self.handle.parquet_shard(*path.relative_to(self.handle.root).parts)
 
     def video_segment(self, episode: EpisodeRecord, camera: str) -> VideoSegment:
+        if self.handle.repo_id is not None:
+            raise DatasetFormatError(
+                "v2.x Hub datasets cannot be lazily streamed without a local download. "
+                "Run with --deep to verify this dataset."
+            )
         filename = f"episode_{episode.episode_index:06d}.mp4"
         matches = sorted(self.handle.root.glob(f"videos/chunk-*/{camera}/{filename}"))
         path = _expect_one_match(matches, what=f"video shard {filename} for camera {camera!r}")
