@@ -400,3 +400,349 @@ def build_v3_real_video(root: Path, *, camera: str = "top") -> None:
     build_v3_dataset(root, camera=camera)
     video_path = root / "videos" / camera / "chunk-000" / "file-000.mp4"
     _write_real_mp4(video_path)
+
+
+def build_v3_wrong_feature_shape(root: Path, *, camera: str = "top") -> None:
+    """Build a v3.0 dataset where 'action' column has wrong declared shape.
+
+    info.json declares action shape=[7] (names has 7 entries) but the Parquet
+    column only has 3 elements per row.  Triggers SEMANTIC.FEATURE_DIMENSIONALITY FAIL.
+    Only this check fires; all STRUCTURAL checks pass because the column exists
+    and the declared dtype is correct.
+    """
+    build_v3_dataset(root, camera=camera)
+    # Add a multi-element action column to info.json with shape mismatch.
+    info_path = root / "meta" / "info.json"
+    info = json.loads(info_path.read_text())
+    # Declare action with 7 names but write 3 elements per row.
+    info["features"]["action"] = {
+        "dtype": "float32",
+        "shape": [7],
+        "names": ["j0", "j1", "j2", "j3", "j4", "j5", "j6"],
+    }
+    info_path.write_text(json.dumps(info))
+
+    # Rewrite Parquet with a 3-element list instead of 7.
+    data_path = root / "data" / "chunk-000" / "file-000.parquet"
+    old = pq.read_table(data_path)
+    n_rows = old.num_rows
+    action_col = pa.array(
+        [[0.1, 0.2, 0.3]] * n_rows,
+        type=pa.list_(pa.float32()),
+    )
+    new = old.append_column(pa.field("action", pa.list_(pa.float32())), action_col)
+    pq.write_table(new, data_path)
+
+
+def build_v3_with_action(root: Path, *, camera: str = "top") -> None:
+    """Build a v3.0 dataset where action matches its declared shape exactly.
+
+    Used as the clean-passes fixture for SEMANTIC.FEATURE_DIMENSIONALITY.
+    action has shape=[3] and names=["j0","j1","j2"]; Parquet stores 3 floats.
+    """
+    build_v3_dataset(root, camera=camera)
+    info_path = root / "meta" / "info.json"
+    info = json.loads(info_path.read_text())
+    info["features"]["action"] = {
+        "dtype": "float32",
+        "shape": [3],
+        "names": ["j0", "j1", "j2"],
+    }
+    info_path.write_text(json.dumps(info))
+
+    data_path = root / "data" / "chunk-000" / "file-000.parquet"
+    old = pq.read_table(data_path)
+    n_rows = old.num_rows
+    action_col = pa.array(
+        [[0.1, 0.2, 0.3]] * n_rows,
+        type=pa.list_(pa.float32()),
+    )
+    new = old.append_column(pa.field("action", pa.list_(pa.float32())), action_col)
+    pq.write_table(new, data_path)
+
+
+def build_v3_missing_task(root: Path, *, camera: str = "top") -> None:
+    """Build a v3.0 dataset where frame data references a task_index not in tasks.parquet.
+
+    task_index=99 appears in one frame row but only task_index=0 is defined.
+    Triggers SEMANTIC.TASK_INTEGRITY FAIL.
+    """
+    build_v3_dataset(root, camera=camera)
+    data_path = root / "data" / "chunk-000" / "file-000.parquet"
+    old = pq.read_table(data_path)
+    # Change the last row's task_index to 99 (undefined).
+    ti_col = old.column("task_index").to_pylist()
+    ti_col[-1] = 99
+    new = old.set_column(
+        old.schema.get_field_index("task_index"),
+        "task_index",
+        pa.array(ti_col, type=pa.int64()),
+    )
+    pq.write_table(new, data_path)
+
+
+def build_v3_empty_task_description(root: Path, *, camera: str = "top") -> None:
+    """Build a v3.0 dataset where the task description is an empty string.
+
+    All task_index references are valid but the mapped description is "".
+    Triggers SEMANTIC.TASK_INTEGRITY FAIL.
+    """
+    build_v3_dataset(root, camera=camera)
+    tasks_path = root / "meta" / "tasks.parquet"
+    tasks_table = pa.table({"task_index": pa.array([0], type=pa.int64()), "task": pa.array([""])})
+    pq.write_table(tasks_table, tasks_path)
+
+
+def build_v3_no_language(root: Path, *, camera: str = "top") -> None:
+    """Build a v3.0 dataset where episodes have empty string task descriptions.
+
+    The task table has task_index=0 -> "" so all episodes lack a language label.
+    Triggers SEMANTIC.LANGUAGE_PRESENT WARN.
+    """
+    build_v3_dataset(root, camera=camera)
+    # Replace tasks in both the tasks table and episode metadata.
+    tasks_path = root / "meta" / "tasks.parquet"
+    pq.write_table(
+        pa.table({"task_index": pa.array([0], type=pa.int64()), "task": pa.array([""])}),
+        tasks_path,
+    )
+    # Update episode metadata to use empty task strings.
+    ep_dir = root / "meta" / "episodes" / "chunk-000"
+    ep_path = ep_dir / "file-000.parquet"
+    old_ep = pq.read_table(ep_path)
+    n_ep = old_ep.num_rows
+    new_ep = old_ep.set_column(
+        old_ep.schema.get_field_index("tasks"),
+        "tasks",
+        pa.array([[""] for _ in range(n_ep)], type=pa.list_(pa.string())),
+    )
+    pq.write_table(new_ep, ep_path)
+
+
+def build_v3_with_intrinsics_plausible(root: Path, *, camera: str = "top") -> None:
+    """Build a v3.0 dataset with a plausible camera_intrinsics column.
+
+    Adds an 'observation.camera_intrinsics' feature with shape [9] containing
+    a reasonable K matrix.  SEMANTIC.CAMERA_INTRINSICS_PLAUSIBLE should pass
+    (return INFO with no violations).
+    """
+    build_v3_dataset(root, camera=camera)
+    info_path = root / "meta" / "info.json"
+    info = json.loads(info_path.read_text())
+    info["features"]["observation.camera_intrinsics"] = {
+        "dtype": "float32",
+        "shape": [9],
+        "names": None,
+    }
+    info_path.write_text(json.dumps(info))
+
+    data_path = root / "data" / "chunk-000" / "file-000.parquet"
+    old = pq.read_table(data_path)
+    n_rows = old.num_rows
+    # Plausible K: fx=500, 0, cx=320, 0, fy=500, cy=240, 0, 0, 1
+    k_row = [500.0, 0.0, 320.0, 0.0, 500.0, 240.0, 0.0, 0.0, 1.0]
+    k_col = pa.array([k_row] * n_rows, type=pa.list_(pa.float32()))
+    new = old.append_column(
+        pa.field("observation.camera_intrinsics", pa.list_(pa.float32())), k_col
+    )
+    pq.write_table(new, data_path)
+
+
+def build_v3_with_intrinsics_implausible(root: Path, *, camera: str = "top") -> None:
+    """Build a v3.0 dataset with an implausible camera_intrinsics column.
+
+    Focal lengths are negative, which is physically impossible.
+    SEMANTIC.CAMERA_INTRINSICS_PLAUSIBLE should fire (INFO with violations).
+    """
+    build_v3_dataset(root, camera=camera)
+    info_path = root / "meta" / "info.json"
+    info = json.loads(info_path.read_text())
+    info["features"]["observation.camera_intrinsics"] = {
+        "dtype": "float32",
+        "shape": [9],
+        "names": None,
+    }
+    info_path.write_text(json.dumps(info))
+
+    data_path = root / "data" / "chunk-000" / "file-000.parquet"
+    old = pq.read_table(data_path)
+    n_rows = old.num_rows
+    # Implausible K: negative focal lengths.
+    k_row = [-500.0, 0.0, 320.0, 0.0, -500.0, 240.0, 0.0, 0.0, 1.0]
+    k_col = pa.array([k_row] * n_rows, type=pa.list_(pa.float32()))
+    new = old.append_column(
+        pa.field("observation.camera_intrinsics", pa.list_(pa.float32())), k_col
+    )
+    pq.write_table(new, data_path)
+
+
+# ---------------------------------------------------------------------------
+# M6 STATISTICAL fixture builders
+# ---------------------------------------------------------------------------
+
+
+def _write_stats_json(root: Path, stats: dict[str, Any]) -> None:
+    """Write meta/stats.json with the given stats dict."""
+    (root / "meta" / "stats.json").write_text(json.dumps(stats))
+
+
+def build_v3_with_correct_stats(root: Path, *, camera: str = "top") -> None:
+    """Build a v3.0 dataset with stats.json matching the actual data.
+
+    The timestamp column in the fixture has values [0, 1/30, 2/30, 3/30] per
+    episode (3 episodes).  We compute the correct global mean/std and write
+    them into stats.json so STATISTICAL.STATS_MATCH_DATA passes.
+    """
+    build_v3_dataset(root, camera=camera)
+    # All timestamps: 0, 1/30, 2/30, 3/30 repeated num_episodes times.
+    # Mean = (0 + 1/30 + 2/30 + 3/30) / 4 = 6/(30*4) = 0.05
+    # But stored as float32 so we match the actual stored precision.
+    all_ts = [float(f / 30.0) for ep in range(3) for f in range(FRAMES_PER_EPISODE)]
+    n = len(all_ts)
+    mean = sum(all_ts) / n
+    variance = sum((x - mean) ** 2 for x in all_ts) / n
+    import math as _math
+
+    std = _math.sqrt(variance)
+    _write_stats_json(
+        root,
+        {
+            "timestamp": {
+                "mean": mean,
+                "std": std,
+                "min": min(all_ts),
+                "max": max(all_ts),
+                "count": n,
+            }
+        },
+    )
+
+
+def build_v3_with_wrong_stats(root: Path, *, camera: str = "top") -> None:
+    """Build a v3.0 dataset where stats.json has wrong mean for 'timestamp'.
+
+    The true mean of the timestamp column is ~0.05 but stats.json claims 0.9
+    (a ~1700% relative error).  Triggers STATISTICAL.STATS_MATCH_DATA FAIL.
+    Only this check fires; structural checks pass because the data is valid.
+    """
+    build_v3_with_correct_stats(root, camera=camera)
+    # Overwrite with a wrong mean.
+    stats_path = root / "meta" / "stats.json"
+    stats = json.loads(stats_path.read_text())
+    stats["timestamp"]["mean"] = 0.9  # Correct is ~0.05; delta >> rtol.
+    stats_path.write_text(json.dumps(stats))
+
+
+def build_v3_with_per_episode_stats(
+    root: Path, *, camera: str = "top", corrupt: bool = False
+) -> None:
+    """Build a v3.0 dataset with per-episode stats inline in episode metadata.
+
+    When corrupt=False: stats match the data (STATISTICAL.PER_EPISODE_STATS_MATCH passes).
+    When corrupt=True:  stats are wrong (WARN fires).
+    """
+    build_v3_dataset(root, camera=camera)
+
+    ep_dir = root / "meta" / "episodes" / "chunk-000"
+    ep_path = ep_dir / "file-000.parquet"
+    old_ep = pq.read_table(ep_path)
+
+    # Per-episode timestamp stats: each episode has [0, 1/30, 2/30, 3/30].
+    n_ep = old_ep.num_rows
+    ep_ts_mean = sum(f / 30.0 for f in range(FRAMES_PER_EPISODE)) / FRAMES_PER_EPISODE
+    ep_ts_var = sum((f / 30.0 - ep_ts_mean) ** 2 for f in range(FRAMES_PER_EPISODE))
+    ep_ts_var /= FRAMES_PER_EPISODE
+    import math as _math
+
+    ep_ts_std = _math.sqrt(ep_ts_var)
+
+    mean_val = 9.9 if corrupt else ep_ts_mean
+    std_val = 9.9 if corrupt else ep_ts_std
+
+    mean_col = pa.array([mean_val] * n_ep, type=pa.float64())
+    std_col = pa.array([std_val] * n_ep, type=pa.float64())
+
+    new_ep = old_ep
+    new_ep = new_ep.append_column(pa.field("stats/timestamp/mean", pa.float64()), mean_col)
+    new_ep = new_ep.append_column(pa.field("stats/timestamp/std", pa.float64()), std_col)
+    pq.write_table(new_ep, ep_path)
+
+
+def build_v3_all_nan_action(root: Path, *, camera: str = "top") -> None:
+    """Build a v3.0 dataset where the 'action' column is entirely NaN.
+
+    Triggers STATISTICAL.VALUE_SANITY FAIL (all-NaN case).
+    """
+    build_v3_dataset(root, camera=camera)
+    info_path = root / "meta" / "info.json"
+    info = json.loads(info_path.read_text())
+    info["features"]["action"] = {"dtype": "float32", "shape": [1], "names": None}
+    info_path.write_text(json.dumps(info))
+
+    data_path = root / "data" / "chunk-000" / "file-000.parquet"
+    old = pq.read_table(data_path)
+    n_rows = old.num_rows
+    import math as _math
+
+    action_col = pa.array([_math.nan] * n_rows, type=pa.float32())
+    new = old.append_column(pa.field("action", pa.float32()), action_col)
+    pq.write_table(new, data_path)
+
+
+def build_v3_constant_action(root: Path, *, camera: str = "top") -> None:
+    """Build a v3.0 dataset where the 'action' column is constant across an episode.
+
+    Triggers STATISTICAL.VALUE_SANITY WARN (constant value, may be implausible).
+    Action is 0.5 for every frame — not zero and not NaN, so severity is WARN.
+    """
+    build_v3_dataset(root, camera=camera)
+    info_path = root / "meta" / "info.json"
+    info = json.loads(info_path.read_text())
+    info["features"]["action"] = {"dtype": "float32", "shape": [1], "names": None}
+    info_path.write_text(json.dumps(info))
+
+    data_path = root / "data" / "chunk-000" / "file-000.parquet"
+    old = pq.read_table(data_path)
+    n_rows = old.num_rows
+    action_col = pa.array([0.5] * n_rows, type=pa.float32())
+    new = old.append_column(pa.field("action", pa.float32()), action_col)
+    pq.write_table(new, data_path)
+
+
+def build_v3_all_zero_action(root: Path, *, camera: str = "top") -> None:
+    """Build a v3.0 dataset where the 'action' column is all-zero across an episode.
+
+    Triggers STATISTICAL.VALUE_SANITY WARN (all-zero case).
+    """
+    build_v3_dataset(root, camera=camera)
+    info_path = root / "meta" / "info.json"
+    info = json.loads(info_path.read_text())
+    info["features"]["action"] = {"dtype": "float32", "shape": [1], "names": None}
+    info_path.write_text(json.dumps(info))
+
+    data_path = root / "data" / "chunk-000" / "file-000.parquet"
+    old = pq.read_table(data_path)
+    n_rows = old.num_rows
+    action_col = pa.array([0.0] * n_rows, type=pa.float32())
+    new = old.append_column(pa.field("action", pa.float32()), action_col)
+    pq.write_table(new, data_path)
+
+
+def build_v3_varying_action(root: Path, *, camera: str = "top") -> None:
+    """Build a v3.0 dataset where 'action' varies sensibly across frames.
+
+    Used as the clean-passes fixture for STATISTICAL.VALUE_SANITY.
+    Action values cycle through [0.1, 0.2, 0.3, 0.4] — non-constant, non-NaN.
+    """
+    build_v3_dataset(root, camera=camera)
+    info_path = root / "meta" / "info.json"
+    info = json.loads(info_path.read_text())
+    info["features"]["action"] = {"dtype": "float32", "shape": [1], "names": None}
+    info_path.write_text(json.dumps(info))
+
+    data_path = root / "data" / "chunk-000" / "file-000.parquet"
+    old = pq.read_table(data_path)
+    n_rows = old.num_rows
+    action_col = pa.array([0.1 + (i % 4) * 0.1 for i in range(n_rows)], type=pa.float32())
+    new = old.append_column(pa.field("action", pa.float32()), action_col)
+    pq.write_table(new, data_path)
