@@ -96,6 +96,18 @@ class TestLintExitCodes:
         result = runner.invoke(app, ["lint", "/does/not/exist"])
         assert result.exit_code == 2
 
+    def test_exit_1_on_warn_dataset(self, tmp_path: Path) -> None:
+        """Mocked engine returning WARN -> exit 1."""
+        from unittest.mock import patch
+
+        from trajlens.checks.protocol import CheckResult, Severity
+
+        build_v3_real_video(tmp_path)
+        warn_result = CheckResult(check_id="TEST.WARN", severity=Severity.WARN, message="w")
+        with patch("trajlens.checks.engine.CheckEngine.run", return_value=[warn_result]):
+            result = runner.invoke(app, ["lint", str(tmp_path)])
+            assert result.exit_code == 1
+
 
 class TestLintJsonOutput:
     def test_json_flag_produces_valid_json(self, tmp_path: Path) -> None:
