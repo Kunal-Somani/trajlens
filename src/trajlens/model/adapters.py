@@ -255,22 +255,12 @@ class _V2Resolver:
     fps: int
 
     def parquet_shard(self, episode: EpisodeRecord) -> pq.ParquetFile:
-        if self.handle.repo_id is not None:
-            raise DatasetFormatError(
-                "v2.x Hub datasets cannot be lazily streamed without a local download. "
-                "Run with --deep to verify this dataset."
-            )
         filename = f"episode_{episode.episode_index:06d}.parquet"
         matches = sorted(self.handle.root.glob(f"data/chunk-*/{filename}"))
         path = _expect_one_match(matches, what=f"data shard {filename}")
         return self.handle.parquet_shard(*path.relative_to(self.handle.root).parts)
 
     def video_segment(self, episode: EpisodeRecord, camera: str) -> VideoSegment:
-        if self.handle.repo_id is not None:
-            raise DatasetFormatError(
-                "v2.x Hub datasets cannot be lazily streamed without a local download. "
-                "Run with --deep to verify this dataset."
-            )
         filename = f"episode_{episode.episode_index:06d}.mp4"
         matches = sorted(self.handle.root.glob(f"videos/chunk-*/{camera}/{filename}"))
         path = _expect_one_match(matches, what=f"video shard {filename} for camera {camera!r}")
@@ -283,6 +273,12 @@ class _V2Resolver:
 
 
 def _build_v2(handle: SourceHandle) -> CanonicalDataset:
+    if handle.repo_id is not None:
+        raise DatasetFormatError(
+            "v2.x Hub datasets cannot be lazily streamed. Shard paths are implicit and "
+            "require a local filesystem to glob. Download the dataset locally to verify it."
+        )
+
     features = _parse_features(dict(handle.info.features))
     cameras = _camera_keys(features)
     task_table = _load_v2_task_table(handle)
