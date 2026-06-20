@@ -27,6 +27,7 @@ import structlog
 
 from trajlens.checks.protocol import Check, CheckContext, CheckResult, Severity
 from trajlens.checks.registry import registry
+from trajlens.checks.utils import ShardColumnCache
 from trajlens.model.canonical import CanonicalDataset
 from trajlens.sources.paths import safe_join
 
@@ -178,21 +179,17 @@ class _IndexContinuityCheck:
 
         # Frame-level: within each episode the Parquet's frame_index column
         # must run 0..length-1; global index must be contiguous too.
+        cache = ShardColumnCache(["frame_index", "episode_index", "index"])
         for episode in ds:
-            pf = ds.parquet_shard_for_episode(episode)
-            table = pf.read(columns=["frame_index", "episode_index", "index"])  # type: ignore[no-untyped-call]
+            data = cache.get_episode_data(ds, episode)
 
-            # Filter to just this episode's rows.
-            ep_mask = table.column("episode_index").to_pylist()
-            ep_rows_idx = [i for i, v in enumerate(ep_mask) if v == episode.episode_index]
-
-            if len(ep_rows_idx) == 0:
+            if len(data["frame_index"]) == 0:
                 violations.append(
                     f"Episode {episode.episode_index}: no rows found in Parquet shard"
                 )
                 continue
 
-            frame_indices = [table.column("frame_index").to_pylist()[i] for i in ep_rows_idx]
+            frame_indices = data["frame_index"]
             expected_frame_indices = list(range(episode.length))
             if frame_indices != expected_frame_indices:
                 violations.append(
@@ -201,7 +198,7 @@ class _IndexContinuityCheck:
                     f"{frame_indices[:5]}{'...' if len(frame_indices) > 5 else ''})"
                 )
 
-            global_indices = [table.column("index").to_pylist()[i] for i in ep_rows_idx]
+            global_indices = data["index"]
             expected_global = list(
                 range(episode.dataset_from_index, episode.dataset_from_index + episode.length)
             )
@@ -266,12 +263,11 @@ class _MetadataDataAgreementCheck:
 
         # 3. Per-episode: actual row count in shard must equal declared length,
         #    and from/to slice boundaries must agree.
+        cache = ShardColumnCache(["episode_index"])
         for episode in ds:
-            pf = ds.parquet_shard_for_episode(episode)
-            table = pf.read(columns=["episode_index"])  # type: ignore[no-untyped-call]
-
-            ep_col = table.column("episode_index").to_pylist()
-            actual_rows = sum(1 for v in ep_col if v == episode.episode_index)
+            data = cache.get_episode_data(ds, episode)
+            ep_mask = data["episode_index"]
+            actual_rows = len(ep_mask)
 
             if actual_rows != episode.length:
                 violations.append(
