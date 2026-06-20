@@ -10,7 +10,7 @@ use.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 import pyarrow.parquet as pq
@@ -34,16 +34,26 @@ class SourceHandle:
     info: DatasetInfoModel
     repo_id: str | None = None
     revision: str | None = None
+    _parquet_cache: dict[tuple[str, ...], pq.ParquetFile] = field(
+        default_factory=dict, init=False, repr=False
+    )
 
     def parquet_shard(self, *relative_parts: str) -> pq.ParquetFile:
         """Open a Parquet shard by path relative to the dataset root, safely joined."""
+        if relative_parts in self._parquet_cache:
+            return self._parquet_cache[relative_parts]
+
         if self.repo_id is not None:
             path_str = "/".join(relative_parts)
             from trajlens.sources.handles import open_hub_parquet_shard
 
-            return open_hub_parquet_shard(self.repo_id, self.revision, path_str)
-        path = safe_join(self.root, *relative_parts)
-        return open_parquet_shard(path)
+            pf = open_hub_parquet_shard(self.repo_id, self.revision, path_str)
+        else:
+            path = safe_join(self.root, *relative_parts)
+            pf = open_parquet_shard(path)
+
+        self._parquet_cache[relative_parts] = pf
+        return pf
 
     def video_shard(self, *relative_parts: str) -> VideoShardHandle:
         """Open a video shard handle by path relative to the dataset root, safely joined."""

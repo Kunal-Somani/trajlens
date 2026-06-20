@@ -43,6 +43,7 @@ import structlog
 
 from trajlens.checks.protocol import Check, CheckContext, CheckResult, Severity
 from trajlens.checks.registry import registry
+from trajlens.checks.utils import ShardColumnCache
 from trajlens.model.canonical import CanonicalDataset, FeatureSpec
 
 log = structlog.get_logger(__name__)
@@ -62,6 +63,8 @@ class _FeatureDimensionalityCheck:
     def run(self, ds: CanonicalDataset, ctx: CheckContext) -> CheckResult:
         mismatches: list[str] = []
 
+        cache: ShardColumnCache | None = None
+
         for episode in ds:
             pf = ds.parquet_shard_for_episode(episode)
             schema = pf.schema_arrow
@@ -75,18 +78,11 @@ class _FeatureDimensionalityCheck:
             if not candidate_features:
                 continue
 
-            # Read only the candidate columns plus episode_index for filtering.
-            table = pf.read(  # type: ignore[no-untyped-call]
-                columns=["episode_index", *candidate_features.keys()]
-            )
-            ep_col = table.column("episode_index").to_pylist()
-            # Get the first row index belonging to this episode for sampling.
-            sample_idx: int | None = None
-            for row_i, ep_v in enumerate(ep_col):
-                if ep_v == episode.episode_index:
-                    sample_idx = row_i
-                    break
-            if sample_idx is None:
+            if cache is None:
+                cache = ShardColumnCache(list(candidate_features.keys()))
+
+            data = cache.get_episode_data(ds, episode)
+            if len(data["episode_index"]) == 0:
                 continue
 
             for feat_name, feat_spec in candidate_features.items():
@@ -99,8 +95,8 @@ class _FeatureDimensionalityCheck:
                 actual_width = _arrow_column_width(arrow_type)
                 if actual_width is None:
                     # Variable-length list: sample one actual row value.
-                    col_list = table.column(feat_name).to_pylist()
-                    sampled = col_list[sample_idx]
+                    col_list = data[feat_name]
+                    sampled = col_list[0]
                     actual_width = len(sampled) if isinstance(sampled, list) else 1
 
                 if actual_width != declared_width:
@@ -188,15 +184,12 @@ class _TaskIntegrityCheck:
         referenced: set[int] = set()
 
         # Scan per-episode Parquet for referenced task_index values.
+        cache = ShardColumnCache(["task_index"])
         defined_indices: set[int] = set(ds.task_table.keys())
         for episode in ds:
-            pf = ds.parquet_shard_for_episode(episode)
-            table = pf.read(columns=["episode_index", "task_index"])  # type: ignore[no-untyped-call]
-            ep_col = table.column("episode_index").to_pylist()
-            ti_col = table.column("task_index").to_pylist()
-            for ep_val, ti_val in zip(ep_col, ti_col, strict=True):
-                if ep_val == episode.episode_index:
-                    referenced.add(int(ti_val))
+            data = cache.get_episode_data(ds, episode)
+            for ti_val in data["task_index"]:
+                referenced.add(int(ti_val))
 
         # Undefined references.
         undefined = referenced - defined_indices

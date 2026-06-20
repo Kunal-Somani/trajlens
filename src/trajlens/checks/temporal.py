@@ -35,6 +35,7 @@ import structlog
 
 from trajlens.checks.protocol import Check, CheckContext, CheckResult, Severity
 from trajlens.checks.registry import registry
+from trajlens.checks.utils import ShardColumnCache
 from trajlens.model.canonical import CanonicalDataset
 
 log = structlog.get_logger(__name__)
@@ -63,15 +64,10 @@ class _TimestampMonotonicCheck:
     def run(self, ds: CanonicalDataset, ctx: CheckContext) -> CheckResult:
         violations: list[str] = []
 
+        cache = ShardColumnCache(["timestamp"])
         for episode in ds:
-            pf = ds.parquet_shard_for_episode(episode)
-            table = pf.read(columns=["episode_index", "timestamp"])  # type: ignore[no-untyped-call]
-            ep_col = table.column("episode_index").to_pylist()
-            ts_col = [
-                float(v)
-                for v, ep in zip(table.column("timestamp").to_pylist(), ep_col, strict=True)
-                if ep == episode.episode_index
-            ]
+            data = cache.get_episode_data(ds, episode)
+            ts_col = [float(v) for v in data["timestamp"]]
 
             if len(ts_col) < 2:
                 continue  # Single-frame episodes are trivially monotonic.
@@ -123,18 +119,13 @@ class _TimestampSpacingCheck:
         warns: list[str] = []
         fails: list[str] = []
 
+        cache = ShardColumnCache(["timestamp"])
         for episode in ds:
             if episode.length < 2:
                 continue
 
-            pf = ds.parquet_shard_for_episode(episode)
-            table = pf.read(columns=["episode_index", "timestamp"])  # type: ignore[no-untyped-call]
-            ep_col = table.column("episode_index").to_pylist()
-            ts_col = [
-                float(v)
-                for v, ep in zip(table.column("timestamp").to_pylist(), ep_col, strict=True)
-                if ep == episode.episode_index
-            ]
+            data = cache.get_episode_data(ds, episode)
+            ts_col = [float(v) for v in data["timestamp"]]
 
             for i in range(1, len(ts_col)):
                 gap = ts_col[i] - ts_col[i - 1]
@@ -217,17 +208,12 @@ class _TimestampDriftCheck:
         first_breach_episode: int | None = None
         first_breach_drift: float = 0.0
 
+        cache = ShardColumnCache(["frame_index", "timestamp"])
         for episode in ds:
-            pf = ds.parquet_shard_for_episode(episode)
-            table = pf.read(columns=["episode_index", "frame_index", "timestamp"])  # type: ignore[no-untyped-call]
-            ep_col = table.column("episode_index").to_pylist()
-            fi_col = table.column("frame_index").to_pylist()
-            ts_col = table.column("timestamp").to_pylist()
-
+            data = cache.get_episode_data(ds, episode)
             ep_rows = [
                 (int(fi), float(ts))
-                for fi, ts, ep in zip(fi_col, ts_col, ep_col, strict=True)
-                if ep == episode.episode_index
+                for fi, ts in zip(data["frame_index"], data["timestamp"], strict=True)
             ]
 
             for frame_index, stored_ts in ep_rows:

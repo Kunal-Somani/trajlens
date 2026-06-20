@@ -18,6 +18,12 @@ source .venv/bin/activate
 uv pip install -e ".[dev,hub]"
 ```
 
+## Performance Note: Hub vs. Local
+
+Linting a 100-episode dataset locally takes under 30 seconds.
+
+Linting a Hub dataset directly (`trajlens lint org/dataset`) streams data over HTTP. Because it must execute isolated network requests for data shards, it will inherently be slower than a local copy (typically ~1 to 3 minutes depending on shard size and network speed). For repeated linting, we strongly recommend downloading the dataset locally first.
+
 ## License
 
 Apache-2.0
