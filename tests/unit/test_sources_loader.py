@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import Any
 from unittest.mock import patch
 
 import pytest
@@ -60,23 +61,69 @@ class TestResolveLocal:
 
 class TestResolveHubMocked:
     def test_hub_repo_not_found_raises_source_resolution_error(self, tmp_path: Path) -> None:
-        nonexistent_local = tmp_path / "does-not-exist"
         with (
-            patch("huggingface_hub.snapshot_download", side_effect=Exception("404")),
+            patch("huggingface_hub.HfApi.list_repo_tree", side_effect=Exception("404")),
             pytest.raises(SourceResolutionError, match="could not resolve"),
         ):
-            SourceLoader().resolve(str(nonexistent_local))
+            SourceLoader().resolve("org/does-not-exist")
 
     def test_hub_repo_resolves_via_downloaded_snapshot(self, tmp_path: Path) -> None:
         snapshot_dir = tmp_path / "fake-snapshot"
         snapshot_dir.mkdir()
         build_v3_dataset(snapshot_dir, num_episodes=1)
 
-        with patch("huggingface_hub.snapshot_download", return_value=str(snapshot_dir)):
+        def mock_download(
+            repo_id: str,
+            filename: str,
+            repo_type: str,
+            revision: str | None,
+            local_dir: str,
+            **kwargs: Any,
+        ) -> str:
+            src = snapshot_dir / filename
+            dest = Path(local_dir) / filename
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            if src.exists():
+                dest.write_bytes(src.read_bytes())
+            return str(dest)
+
+        from unittest.mock import MagicMock
+
+        from huggingface_hub import RepoFile
+
+        def make_mock_file(path_str: str) -> MagicMock:
+            m = MagicMock(spec=RepoFile)
+            m.path = path_str
+            return m
+
+        mock_files = [
+            make_mock_file(str(p.relative_to(snapshot_dir)))
+            for p in snapshot_dir.glob("meta/**/*")
+            if p.is_file()
+        ]
+
+        with (
+            patch("huggingface_hub.HfApi.list_repo_tree", return_value=mock_files) as mock_list,
+            patch("huggingface_hub.hf_hub_download", side_effect=mock_download) as mock_dl,
+        ):
             handle = SourceLoader().resolve("org/fake-repo")
 
-        assert handle.root == snapshot_dir.resolve()
+        # The root is now the computed local_dir, not snapshot_dir directly
+        assert handle.root.name == "main"
+        assert handle.root.parent.name == "org--fake-repo"
         assert handle.version is DatasetVersion.V3_0
+
+        mock_list.assert_called_once_with(
+            repo_id="org/fake-repo",
+            repo_type="dataset",
+            revision=None,
+            path_in_repo="meta",
+            recursive=True,
+        )
+        assert mock_dl.call_count == len(mock_files)
+        called_files = [call.kwargs.get("filename") for call in mock_dl.call_args_list]
+        expected_files = [m.path for m in mock_files]
+        assert sorted(called_files) == sorted(expected_files)
 
 
 class TestSourceHandleShardAccess:
