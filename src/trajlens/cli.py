@@ -66,23 +66,21 @@ def lint(
         str | None,
         typer.Option("--report", help="Write HTML report to this path."),
     ] = None,
+    sarif: Annotated[
+        str | None,
+        typer.Option("--sarif", help="Write SARIF 2.1.0 report to this path."),
+    ] = None,
 ) -> None:
     """Validate a LeRobotDataset and report its quality grade."""
     import sys
+    from pathlib import Path
 
     from trajlens.checks import CheckContext, CheckEngine, Severity, registry
     from trajlens.checks.protocol import CheckResult
     from trajlens.errors import DatasetError
     from trajlens.model import build_canonical_dataset
+    from trajlens.report import render_html, render_json, render_sarif, render_terminal
     from trajlens.sources.loader import SourceLoader
-
-    if json_output or report:
-        typer.echo(
-            "ERROR: --json and --report output are M5 scope and not yet implemented. "
-            "Run without those flags for plain terminal output.",
-            err=True,
-        )
-        raise typer.Exit(code=2)
 
     try:
         handle = SourceLoader().resolve(ref)
@@ -95,44 +93,26 @@ def lint(
     engine = CheckEngine(registry)
     results: list[CheckResult] = engine.run(ds, ctx)
 
-    _severity_symbol = {
-        Severity.ERROR: "✖ ERROR",
-        Severity.FAIL: "✖ FAIL ",
-        Severity.WARN: "⚠ WARN ",
-        Severity.INFO: "✔ INFO ",
-    }
-
-    typer.echo(f"\ntrajlens lint: {ref}")
-    typer.echo(f"  version : {ds.version.value}")
-    typer.echo(f"  episodes: {ds.num_episodes}")
-    typer.echo(f"  frames  : {ds.num_frames}")
-    typer.echo("")
-
-    counts: dict[Severity, int] = dict.fromkeys(Severity, 0)
-    for result in results:
-        counts[result.severity] += 1
-        sym = _severity_symbol[result.severity]
-        typer.echo(f"  {sym}  {result.check_id}")
-        typer.echo(f"           {result.message}")
-
-    typer.echo("")
-    typer.echo(
-        f"  Summary: {counts[Severity.FAIL]} FAIL, {counts[Severity.WARN]} WARN, "
-        f"{counts[Severity.ERROR]} ERROR, {counts[Severity.INFO]} INFO"
-    )
-
     worst = max((r.severity for r in results), default=Severity.INFO)
-    if worst >= Severity.ERROR:
-        typer.echo("  Grade  : ERROR (checks could not evaluate)")
-        sys.exit(3)
-    elif worst >= Severity.FAIL:
-        typer.echo("  Grade  : FAIL (unsafe to train on)")
-        sys.exit(1)
-    elif worst >= Severity.WARN:
-        typer.echo("  Grade  : WARN (usable with caution)")
-        sys.exit(0)
+
+    if json_output:
+        typer.echo(render_json(ref, ds.version, ds.num_episodes, ds.num_frames, results))
     else:
-        typer.echo("  Grade  : PASS")
+        render_terminal(ref, ds.version, ds.num_episodes, ds.num_frames, results)
+
+    if report is not None:
+        html = render_html(ref, ds.version, ds.num_episodes, ds.num_frames, results)
+        Path(report).write_text(html, encoding="utf-8")
+
+    if sarif is not None:
+        sarif_doc = render_sarif(ref, ds.version, ds.num_episodes, ds.num_frames, results)
+        Path(sarif).write_text(sarif_doc, encoding="utf-8")
+
+    if worst >= Severity.FAIL or worst >= Severity.ERROR:
+        sys.exit(2)
+    elif worst >= Severity.WARN:
+        sys.exit(1)
+    else:
         sys.exit(0)
 
 
