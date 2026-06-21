@@ -45,12 +45,12 @@ def _video_feature(camera: str) -> dict[str, dict[str, Any]]:
     return {camera: {"dtype": "video", "shape": [3, 64, 64], "names": None}}
 
 
-def _write_frames_table(num_episodes: int) -> pa.Table:
+def _write_frames_table(num_episodes: int, fps: int = 30) -> pa.Table:
     timestamps, frame_idx, ep_idx, idx, task_idx = [], [], [], [], []
     frame = 0
     for ep in range(num_episodes):
         for f in range(FRAMES_PER_EPISODE):
-            timestamps.append(f / 30.0)
+            timestamps.append(f / fps)
             frame_idx.append(f)
             ep_idx.append(ep)
             idx.append(frame)
@@ -73,6 +73,7 @@ def build_v3_dataset(
     num_episodes: int = 3,
     camera: str = "top",
     episodes_per_shard: int | None = None,
+    fps: int = 30,
 ) -> None:
     """Build a tiny, valid v3.0-shaped dataset under root.
 
@@ -85,7 +86,7 @@ def build_v3_dataset(
     total_frames = num_episodes * FRAMES_PER_EPISODE
     info = {
         "codebase_version": "v3.0",
-        "fps": 30,
+        "fps": fps,
         "features": {**DEFAULT_FEATURES, **_video_feature(camera)},
         "total_episodes": num_episodes,
         "total_frames": total_frames,
@@ -95,7 +96,7 @@ def build_v3_dataset(
 
     data_dir = root / "data" / "chunk-000"
     data_dir.mkdir(parents=True, exist_ok=True)
-    pq.write_table(_write_frames_table(num_episodes), data_dir / "file-000.parquet")
+    pq.write_table(_write_frames_table(num_episodes, fps=fps), data_dir / "file-000.parquet")
 
     shard_size = episodes_per_shard or max(num_episodes, 1)
     episode_rows: list[dict[str, Any]] = []
@@ -114,8 +115,8 @@ def build_v3_dataset(
                 "meta/episodes/file_index": 0,
                 f"videos/{camera}/chunk_index": 0,
                 f"videos/{camera}/file_index": 0,
-                f"videos/{camera}/from_timestamp": from_idx / 30.0,
-                f"videos/{camera}/to_timestamp": (from_idx + FRAMES_PER_EPISODE) / 30.0,
+                f"videos/{camera}/from_timestamp": from_idx / fps,
+                f"videos/{camera}/to_timestamp": (from_idx + FRAMES_PER_EPISODE) / fps,
             }
         )
 
@@ -371,6 +372,83 @@ def build_v3_timestamp_drift(
     pq.write_table(new, data_path)
 
 
+def build_v3_long_episode_no_drift(
+    root: Path,
+    *,
+    camera: str = "top",
+    fps: int = 10,
+    frames_per_episode: int = 125,
+    num_episodes: int = 5,
+) -> None:
+    """Build a v3.0 dataset with no real drift, but many frames/episode at fps.
+
+    Mirrors real Hub datasets like lerobot/pusht (fps=10, 125 frames/episode):
+    enough frames at an fps with no exact float32 representation (e.g. 1/10)
+    for pure float32 storage quantization to accumulate, without injecting
+    any actual timestamp drift. Used to regression-test that
+    KNOWNBUG.TIMESTAMP_DRIFT does not false-fire on quantization alone.
+    """
+    build_v3_dataset(root, num_episodes=num_episodes, camera=camera, fps=fps)
+    data_path = root / "data" / "chunk-000" / "file-000.parquet"
+
+    frame_index: list[int] = []
+    episode_index: list[int] = []
+    timestamp: list[float] = []
+    index: list[int] = []
+    task_index: list[int] = []
+    frame = 0
+    for ep in range(num_episodes):
+        for fi in range(frames_per_episode):
+            frame_index.append(fi)
+            episode_index.append(ep)
+            timestamp.append(fi / fps)
+            index.append(frame)
+            task_index.append(0)
+            frame += 1
+
+    new = pa.table(
+        {
+            "timestamp": pa.array(timestamp, type=pa.float32()),
+            "frame_index": pa.array(frame_index, type=pa.int64()),
+            "episode_index": pa.array(episode_index, type=pa.int64()),
+            "index": pa.array(index, type=pa.int64()),
+            "task_index": pa.array(task_index, type=pa.int64()),
+        }
+    )
+    pq.write_table(new, data_path)
+
+    total_frames = num_episodes * frames_per_episode
+    info_path = root / "meta" / "info.json"
+    info = json.loads(info_path.read_text())
+    info["total_frames"] = total_frames
+    info_path.write_text(json.dumps(info))
+
+    episode_rows: list[dict[str, Any]] = []
+    for ep in range(num_episodes):
+        from_idx = ep * frames_per_episode
+        episode_rows.append(
+            {
+                "episode_index": ep,
+                "tasks": [DEFAULT_TASK],
+                "length": frames_per_episode,
+                "data/chunk_index": 0,
+                "data/file_index": 0,
+                "dataset_from_index": from_idx,
+                "dataset_to_index": from_idx + frames_per_episode,
+                "meta/episodes/chunk_index": 0,
+                "meta/episodes/file_index": 0,
+                f"videos/{camera}/chunk_index": 0,
+                f"videos/{camera}/file_index": 0,
+                f"videos/{camera}/from_timestamp": from_idx / fps,
+                f"videos/{camera}/to_timestamp": (from_idx + frames_per_episode) / fps,
+            }
+        )
+    columns = {key: [row[key] for row in episode_rows] for key in episode_rows[0]}
+    episodes_table = pa.table(columns)
+    episodes_path = root / "meta" / "episodes" / "chunk-000" / "file-000.parquet"
+    pq.write_table(episodes_table, episodes_path)
+
+
 def build_v3_missing_shard(root: Path, *, camera: str = "top") -> None:
     """Build a v3.0 dataset where the data shard is deleted.
 
@@ -483,6 +561,38 @@ def build_v3_with_action(root: Path, *, camera: str = "top") -> None:
         "dtype": "float32",
         "shape": [3],
         "names": ["j0", "j1", "j2"],
+    }
+    info_path.write_text(json.dumps(info))
+
+    data_path = root / "data" / "chunk-000" / "file-000.parquet"
+    old = pq.read_table(data_path)
+    n_rows = old.num_rows
+    action_col = pa.array(
+        [[0.1, 0.2, 0.3]] * n_rows,
+        type=pa.list_(pa.float32()),
+    )
+    new = old.append_column(pa.field("action", pa.list_(pa.float32())), action_col)
+    pq.write_table(new, data_path)
+
+
+def build_v3_with_action_names_dict(root: Path, *, camera: str = "top") -> None:
+    """Build a v3.0 dataset where action's ``names`` is a dict, not a flat list.
+
+    Mirrors the real lerobot/pusht info.json, where observation.state declares
+    ``names: {"motors": ["motor_0", "motor_1"]}`` -- a dict mapping a semantic
+    axis label to a nested list, per LeRobot's own
+    ``DatasetMetadata.names -> dict[str, list | dict]`` convention. action has
+    shape=[3] and names={"motors": ["j0","j1","j2"]}; Parquet stores 3 floats.
+    Used as the clean-passes fixture for dict-shaped names in
+    SEMANTIC.FEATURE_DIMENSIONALITY.
+    """
+    build_v3_dataset(root, camera=camera)
+    info_path = root / "meta" / "info.json"
+    info = json.loads(info_path.read_text())
+    info["features"]["action"] = {
+        "dtype": "float32",
+        "shape": [3],
+        "names": {"motors": ["j0", "j1", "j2"]},
     }
     info_path.write_text(json.dumps(info))
 

@@ -31,6 +31,7 @@ Timestamp spacing tolerance:
 
 from __future__ import annotations
 
+import numpy as np
 import structlog
 
 from trajlens.checks.protocol import Check, CheckContext, CheckResult, Severity
@@ -217,9 +218,15 @@ class _TimestampDriftCheck:
             ]
 
             for frame_index, stored_ts in ep_rows:
-                ideal_ts = frame_index * ideal_frame_duration
+                # Stored timestamps are persisted as float32 (info.json declares
+                # dtype="float32" for the timestamp feature). Quantize the ideal
+                # value to float32 too before differencing, so both sides round
+                # the same way and the comparison isn't dominated by float32
+                # representation error on fps values like 1/10 that have no
+                # exact binary representation.
+                ideal_ts = float(np.float32(frame_index * ideal_frame_duration))
                 cumulative_drift += abs(stored_ts - ideal_ts)
-                if cumulative_drift >= _DECODER_TOLERANCE_S and first_breach_episode is None:
+                if cumulative_drift > _DECODER_TOLERANCE_S and first_breach_episode is None:
                     first_breach_episode = episode.episode_index
                     first_breach_drift = cumulative_drift
 
@@ -229,7 +236,7 @@ class _TimestampDriftCheck:
                 severity=Severity.FAIL,
                 message=(
                     f"Timestamp drift fingerprint detected (LeRobot issue #3177): "
-                    f"cumulative drift reached {first_breach_drift:.6f}s >= "
+                    f"cumulative drift reached {first_breach_drift:.6f}s > "
                     f"decoder tolerance ({_DECODER_TOLERANCE_S}s) at "
                     f"episode {first_breach_episode}.  "
                     f"Video seeks will land on wrong frames during training."
