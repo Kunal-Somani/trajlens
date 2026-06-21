@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import random
 import subprocess
 import sys
 import time
@@ -47,6 +48,12 @@ DATASET_TIMEOUT_SECONDS = 60
 # Hub search tag filter (07_EVALUATION_AND_ACCURACY.md §4).
 HUB_TAG = "lerobot"
 
+# How much larger a pool to fetch (relative to --limit) before shuffling and
+# truncating, so a random sample isn't just the API's fixed head-of-list.
+_MAX_POOL_MULTIPLIER = 10
+# Absolute cap on pool size regardless of --limit, to bound a single Hub call.
+_MAX_POOL_SIZE = 2000
+
 # Check IDs that map to known bug fingerprints (07 §4).
 KNOWN_BUG_CHECKS = {
     "KNOWNBUG.TIMESTAMP_DRIFT": "#3177",
@@ -66,8 +73,15 @@ def _list_hub_datasets(limit: int, token: str | None) -> list[str]:
 
     Uses the huggingface_hub list_datasets API (not the search API, which
     requires a different token scope) so it works with or without a token.
-    Results are sorted by the Hub's default relevance order; no ordering
-    guarantee is implied or relied on.
+
+    The Hub API returns datasets in a fixed, deterministic order when no
+    explicit ``sort`` is passed (confirmed empirically: repeated calls with
+    identical args return identical order). Truncating that fixed order with
+    ``limit`` alone means every run audits the same head-of-list datasets —
+    not a random sample, but "whatever wave of uploads happens to be first in
+    the API's ordering." We fetch a larger pool (capped at
+    ``_MAX_POOL_MULTIPLIER`` x limit) and shuffle client-side before
+    truncating, so repeated runs see a genuinely different cross-section.
     """
     try:
         from huggingface_hub import list_datasets
@@ -79,16 +93,10 @@ def _list_hub_datasets(limit: int, token: str | None) -> list[str]:
         )
         sys.exit(1)
 
-    datasets = []
-    for ds in list_datasets(
-        filter=HUB_TAG,
-        limit=limit,
-        token=token,
-    ):
-        datasets.append(ds.id)
-        if len(datasets) >= limit:
-            break
-    return datasets
+    pool_size = min(limit * _MAX_POOL_MULTIPLIER, _MAX_POOL_SIZE)
+    pool = [ds.id for ds in list_datasets(filter=HUB_TAG, limit=pool_size, token=token)]
+    random.shuffle(pool)
+    return pool[:limit]
 
 
 # ---------------------------------------------------------------------------
@@ -189,7 +197,7 @@ def _aggregate(
         total_duration += r.get("duration_s") or 0.0
 
         for check_result in r.get("results", []):
-            check_id = check_result.get("id", "")
+            check_id = check_result.get("check_id", "")
             severity = check_result.get("severity", "")
             if severity in ("FAIL", "WARN", "ERROR"):
                 check_fire_counts[check_id] = check_fire_counts.get(check_id, 0) + 1
