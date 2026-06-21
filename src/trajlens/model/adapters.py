@@ -168,9 +168,39 @@ def _load_v3_task_table(handle: SourceHandle) -> dict[int, str]:
     table = handle.parquet_shard(*V3_TASKS_PATH).read()  # type: ignore[no-untyped-call]
     try:
         indices = table.column("task_index").to_pylist()
-        names = table.column("task").to_pylist()
     except KeyError as exc:
         raise DatasetFormatError(f"meta/tasks.parquet is missing required column: {exc}") from exc
+
+    # Real-world schema vs. spec-documented schema discrepancy (confirmed M7,
+    # 2026-06-21, against 5 lerobot/* Hub datasets, all codebase_version=v3.0):
+    #
+    # The spec (03_DATA_FORMAT_SPEC.md §2) documents the schema as:
+    #   task_index: int64, task: string
+    #
+    # Every published lerobot dataset has instead:
+    #   task_index: int64, __index_level_0__: string
+    #
+    # The discrepancy is a Pandas serialization artifact: lerobot stores task
+    # descriptions as the DataFrame index (not a named column), so
+    # df.to_parquet() serializes it as the anonymous Pandas index column
+    # named "__index_level_0__" rather than as a named column "task".
+    # This is not a trajlens spec error — it is a Pandas default behaviour in
+    # lerobot's writer.
+    #
+    # We prefer "__index_level_0__" (the real Hub shape) and fall back to
+    # "task" (the spec-documented shape, in case lerobot's writer ever calls
+    # reset_index() before writing).
+    col_names = table.column_names
+    if "__index_level_0__" in col_names:
+        names = table.column("__index_level_0__").to_pylist()
+    elif "task" in col_names:
+        names = table.column("task").to_pylist()
+    else:
+        raise DatasetFormatError(
+            "meta/tasks.parquet has no recognisable task-description column: "
+            "expected '__index_level_0__' (real Hub schema) or 'task' (spec schema), "
+            f"got columns {col_names!r}"
+        )
     return dict(zip(indices, names, strict=True))
 
 
