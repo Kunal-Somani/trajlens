@@ -29,6 +29,7 @@ from tests.fixtures.builders import (
     build_v3_no_language,
     build_v3_varying_action,
     build_v3_with_action,
+    build_v3_with_action_names_dict,
     build_v3_with_correct_stats,
     build_v3_with_intrinsics_implausible,
     build_v3_with_intrinsics_plausible,
@@ -173,6 +174,17 @@ class TestFeatureDimensionality:
 
     def test_zero_episodes_passes(self, tmp_path: Path) -> None:
         build_v3_dataset(tmp_path, num_episodes=0)
+        result = FEATURE_DIMENSIONALITY.run(_load(tmp_path), CTX)
+        assert result.severity is Severity.INFO
+
+    def test_dict_shaped_names_with_correct_count_passes(self, tmp_path: Path) -> None:
+        """Regression test: dict-shaped names (real lerobot/pusht format).
+
+        action declares names={"motors": ["j0","j1","j2"]} (3 elements nested
+        under one key) against shape=[3]. Must not be miscounted as 1 (the
+        dict's key count) -- the nested list's length is what matters.
+        """
+        build_v3_with_action_names_dict(tmp_path)
         result = FEATURE_DIMENSIONALITY.run(_load(tmp_path), CTX)
         assert result.severity is Severity.INFO
 

@@ -21,3 +21,4 @@ repos:
           - structlog>=24.0
           - typer>=0.12
           - pyarrow>=19.0,<25
+          - numpy>=1.26,<3

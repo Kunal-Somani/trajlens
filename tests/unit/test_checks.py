@@ -19,6 +19,7 @@ from tests.fixtures.builders import (
     build_v3_bad_timestamp_spacing,
     build_v3_corrupt_video,
     build_v3_dataset,
+    build_v3_long_episode_no_drift,
     build_v3_metadata_data_disagreement,
     build_v3_missing_shard,
     build_v3_non_monotonic_timestamps,
@@ -520,6 +521,27 @@ class TestTimestampDrift:
         build_v3_dataset(tmp_path, num_episodes=0)
         result = TIMESTAMP_DRIFT.run(_load(tmp_path), CTX)
         assert result.severity is Severity.INFO
+
+    def test_no_real_drift_at_fps_with_no_exact_float32_passes(self, tmp_path: Path) -> None:
+        """Regression test: pure float32 storage quantization must not false-fire.
+
+        Mirrors the real lerobot/pusht false positive: fps=10 has no exact
+        float32 representation, and with enough frames/episode the rounding
+        error alone used to cross the 1e-4 tolerance with no real drift
+        present. Comparing against a float32-quantized ideal value (matching
+        what's actually stored on disk) must keep cumulative drift at ~0.
+        """
+        build_v3_long_episode_no_drift(tmp_path, fps=10, frames_per_episode=125, num_episodes=5)
+        result = TIMESTAMP_DRIFT.run(_load(tmp_path), CTX)
+        assert result.severity is Severity.INFO
+        assert result.details["cumulative_drift_s"] < 1e-6
+
+    def test_drifted_fails_with_many_frames_per_episode(self, tmp_path: Path) -> None:
+        """Real drift must still be caught even with the float32-quantized comparison."""
+        build_v3_timestamp_drift(tmp_path, num_episodes=5, drift_per_frame=1e-4)
+        result = TIMESTAMP_DRIFT.run(_load(tmp_path), CTX)
+        assert result.severity is Severity.FAIL
+        assert "#3177" in result.message
 
 
 # ---------------------------------------------------------------------------

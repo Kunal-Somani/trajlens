@@ -47,6 +47,28 @@ def build_canonical_dataset(handle: SourceHandle) -> CanonicalDataset:
     return _build_v2(handle)
 
 
+def _flatten_feature_names(names: Any, feature_name: str) -> tuple[str, ...]:
+    """Flatten info.json's ``names`` field to a flat tuple of element names.
+
+    LeRobot's own DatasetMetadata.names is typed ``dict[str, list | dict]``:
+    a feature's ``names`` may be a flat list (e.g. ``["height", "width"]``)
+    or a dict mapping an axis label to a nested list (e.g.
+    ``{"motors": ["motor_0", "motor_1"]}``). Both are valid; the element
+    count is the list length, or the sum of nested list lengths for dicts.
+    """
+    if isinstance(names, dict):
+        flattened: list[str] = []
+        for value in names.values():
+            if not isinstance(value, list):
+                raise DatasetFormatError(
+                    f"feature {feature_name!r} in info.json has a 'names' dict "
+                    f"whose value is not a list: {names!r}"
+                )
+            flattened.extend(value)
+        return tuple(flattened)
+    return tuple(names)
+
+
 def _parse_features(raw: dict[str, dict[str, Any]]) -> dict[str, FeatureSpec]:
     features: dict[str, FeatureSpec] = {}
     for name, spec in raw.items():
@@ -70,7 +92,7 @@ def _parse_features(raw: dict[str, dict[str, Any]]) -> dict[str, FeatureSpec]:
             name=name,
             dtype=dtype,
             shape=tuple(shape),
-            names=tuple(names) if names is not None else None,
+            names=_flatten_feature_names(names, name) if names is not None else None,
         )
     return features
 
