@@ -154,6 +154,23 @@ class TestLintJsonOutput:
             assert "category" in r
             assert "message" in r
 
+    def test_json_load_error_produces_parseable_json(self) -> None:
+        """A load-time DatasetError (e.g. v2.x Hub dataset) must still emit
+        structured JSON on stdout under --json, not just an stderr message.
+        """
+        result = runner.invoke(app, ["lint", "--json", "/nonexistent/path/to/dataset"])
+        assert result.exit_code == 2
+        data = json.loads(result.output)
+        assert data["grade"] == "ERROR"
+        assert data["results"] == []
+        assert data["error_category"]
+        assert data["error_message"]
+
+    def test_json_load_error_has_no_stray_stdout_text(self) -> None:
+        """stdout under --json must be JSON only, even on load failure."""
+        result = runner.invoke(app, ["lint", "--json", "/nonexistent/path/to/dataset"])
+        json.loads(result.output)  # raises if anything but JSON is on stdout
+
 
 class TestLintHtmlReport:
     def test_html_report_creates_file(self, tmp_path: Path) -> None:
