@@ -12,7 +12,12 @@ from pathlib import Path
 import pyarrow.parquet as pq
 import pytest
 
-from tests.fixtures.builders import FRAMES_PER_EPISODE, build_v2_dataset, build_v3_dataset
+from tests.fixtures.builders import (
+    FRAMES_PER_EPISODE,
+    build_v2_dataset,
+    build_v3_dataset,
+    build_v3_dataset_hub_tasks_schema,
+)
 from trajlens.errors import DatasetFormatError
 from trajlens.model import build_canonical_dataset
 from trajlens.sources.loader import SourceHandle, SourceLoader
@@ -196,6 +201,60 @@ class TestFailureModes:
 
         with pytest.raises(DatasetFormatError, match="no video metadata"):
             ds.video_segment_for_episode(ep, "does-not-exist")
+
+
+class TestTasksParquetSchemaCompat:
+    """Regression tests for the real Hub tasks.parquet schema (Bug 4 / M7 fix).
+
+    All lerobot/* Hub datasets (confirmed 2026-06-21, codebase_version=v3.0)
+    write meta/tasks.parquet with columns ``task_index, __index_level_0__``
+    (Pandas DataFrame index serialized as an anonymous column) rather than the
+    spec-documented ``task_index, task``.  _load_v3_task_table() must accept
+    both without raising DatasetFormatError.
+    """
+
+    def test_hub_schema_index_level_0_loads_correctly(self, tmp_path: Path) -> None:
+        """Happy path: __index_level_0__ (real Hub shape) is accepted and returns task table."""
+        build_v3_dataset_hub_tasks_schema(tmp_path, num_episodes=2)
+        ds = build_canonical_dataset(_resolve(tmp_path))
+
+        assert ds.task_table == {0: "do the thing"}
+        assert ds.version is DatasetVersion.V3_0
+        assert ds.num_episodes == 2
+
+    def test_hub_schema_episodes_see_correct_task_descriptions(self, tmp_path: Path) -> None:
+        """Episodes loaded from a Hub-schema dataset have the right task string."""
+        build_v3_dataset_hub_tasks_schema(tmp_path, num_episodes=3)
+        ds = build_canonical_dataset(_resolve(tmp_path))
+
+        for ep in ds:
+            # Episode task list is resolved from episode metadata; the task
+            # *description* lookup goes through task_table, which came from
+            # __index_level_0__.  If the fix is wrong, task_table is empty and
+            # episodes would either error or have no task text.
+            assert ep.tasks == ("do the thing",)
+
+    def test_spec_schema_task_column_still_accepted(self, tmp_path: Path) -> None:
+        """Fallback path: a 'task' column (spec schema) is still accepted."""
+        build_v3_dataset(tmp_path, num_episodes=2)
+        # build_v3_dataset already writes the spec schema (task_index + task).
+        ds = build_canonical_dataset(_resolve(tmp_path))
+        assert ds.task_table == {0: "do the thing"}
+
+    def test_unrecognisable_tasks_schema_raises_format_error(self, tmp_path: Path) -> None:
+        """Neither __index_level_0__ nor 'task' present → DatasetFormatError with clear message."""
+        build_v3_dataset(tmp_path, num_episodes=1)
+        tasks_path = tmp_path / "meta" / "tasks.parquet"
+        # Write a tasks.parquet that has task_index but no recognisable description column.
+        import pyarrow as pa
+
+        bad_table = pa.table(
+            {"task_index": pa.array([0], type=pa.int64()), "description": pa.array(["x"])}
+        )
+        pq.write_table(bad_table, tasks_path)
+
+        with pytest.raises(DatasetFormatError, match="no recognisable task-description column"):
+            build_canonical_dataset(_resolve(tmp_path))
 
 
 class TestEmptyDatasetEdgeCase:

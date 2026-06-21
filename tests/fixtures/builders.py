@@ -157,6 +157,42 @@ def build_v3_dataset(
     (video_dir / "file-000.mp4").write_bytes(b"\x00")
 
 
+def build_v3_dataset_hub_tasks_schema(
+    root: Path,
+    *,
+    num_episodes: int = 3,
+    camera: str = "top",
+) -> None:
+    """Build a v3.0 dataset whose tasks.parquet uses the real Hub schema.
+
+    All lerobot/* datasets published on the Hugging Face Hub (confirmed
+    against 5 datasets, 2026-06-21, codebase_version=v3.0) write
+    ``meta/tasks.parquet`` with columns::
+
+        task_index: int64
+        __index_level_0__: string   <-- NOT "task"
+
+    This is a Pandas serialization artifact: lerobot stores task descriptions
+    as the DataFrame index rather than a named column, so ``df.to_parquet()``
+    emits the anonymous Pandas index column ``__index_level_0__`` instead of
+    a column named ``task``.  The spec (03_DATA_FORMAT_SPEC.md §2) originally
+    documented only the intended schema (``task_index, task``); this fixture
+    captures the real-world shape so trajlens cannot regress silently.
+    """
+    build_v3_dataset(root, num_episodes=num_episodes, camera=camera)
+    tasks_path = root / "meta" / "tasks.parquet"
+    # Overwrite the tasks table with the real Hub column layout.
+    hub_tasks_table = pa.table(
+        {
+            "task_index": pa.array([0], type=pa.int64()),
+            # The task description is serialized as the Pandas DataFrame index,
+            # which Parquet names "__index_level_0__" by default.
+            "__index_level_0__": pa.array([DEFAULT_TASK], type=pa.string()),
+        }
+    )
+    pq.write_table(hub_tasks_table, tasks_path)
+
+
 def build_v2_dataset(
     root: Path, *, codebase_version: str = "v2.1", num_episodes: int = 3, camera: str = "top"
 ) -> None:
