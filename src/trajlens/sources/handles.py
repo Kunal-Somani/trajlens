@@ -46,7 +46,29 @@ def open_video_shard(path: Path) -> VideoShardHandle:
 
 
 def open_hub_parquet_shard(repo_id: str, revision: str | None, path: str) -> pq.ParquetFile:
-    """Open a Parquet shard lazily over HTTP from the Hugging Face Hub."""
+    """Open a Parquet shard lazily over HTTP from the Hugging Face Hub.
+
+    NOTE on pre_buffer=True (investigated 2026-06-21, M7):
+    PyArrow's pre_buffer=True coalesces scattered per-column-chunk HTTP Range
+    requests into fewer, parallel requests via a background I/O thread pool.
+    Benchmark results from direct shard reads:
+      - 835KB shard (aloha): 4.05s → 0.66s (6.1x faster)
+      - 1.1MB shard (xarm):  3.65s → 1.93s (1.9x faster)
+      - 54MB shard (pepijn): 25.5s → 6.5s  (3.9x faster)
+
+    However, the lint pipeline opens the same shard 7 times sequentially (once
+    per ShardColumnCache instance, one per check).  In the multi-open pattern,
+    pre_buffer=True does NOT help: the background thread pool startup overhead
+    is paid 7 times, network jitter dominates per-open latency, and measured
+    totals (default 47.6s vs pre_buffer 49.4s) show no consistent benefit.
+
+    The correct fix for the multi-open problem is to share a single
+    pq.ParquetFile per shard across all checks (i.e. pass the ParquetFile into
+    ShardColumnCache rather than re-opening via parquet_shard_for_episode).
+    That architectural change is tracked separately.  Do not add blanket
+    pre_buffer=True here until that refactor lands, or measure it against the
+    full multi-open scenario rather than single-shard isolates.
+    """
     try:
         from huggingface_hub import HfFileSystem
     except ImportError as exc:
