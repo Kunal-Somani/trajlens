@@ -140,7 +140,16 @@ def _lint_dataset(repo_id: str, python: str, timeout: int) -> dict[str, Any]:
                 result["results"] = lint_json.get("results", [])
                 result["trust_score"] = lint_json.get("trust_score")
                 exit_code = proc.returncode
-                if exit_code == 0:
+                grade = lint_json.get("grade")
+                # Exit code 2 covers both a real check FAIL and a load-time
+                # error (e.g. unsupported v2.x Hub format) -- the JSON
+                # "grade" field is what actually distinguishes them; the CLI
+                # sets grade="ERROR" with error_category/error_message and
+                # an empty results list for the latter case.
+                if grade == "ERROR" and lint_json.get("error_category"):
+                    result["status"] = "ERROR"
+                    result["error_message"] = lint_json.get("error_message")
+                elif exit_code == 0:
                     result["status"] = "PASS"
                 elif exit_code == 1:
                     result["status"] = "WARN"
