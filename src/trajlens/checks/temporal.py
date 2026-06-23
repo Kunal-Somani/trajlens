@@ -204,6 +204,18 @@ class _TimestampDriftCheck:
     requires_video = False
 
     def run(self, ds: CanonicalDataset, ctx: CheckContext) -> CheckResult:
+        if "frame_index" not in ds.features:
+            return CheckResult(
+                check_id=self.id,
+                severity=Severity.INFO,
+                message=(
+                    "Skipped KNOWNBUG.TIMESTAMP_DRIFT: dataset has no bare "
+                    "'frame_index' feature (e.g. multi-camera datasets namespace "
+                    "it as 'frame_index.<camera>'). See STRUCTURAL.SCHEMA_CONSISTENCY "
+                    "for schema details."
+                ),
+            )
+
         ideal_frame_duration = 1.0 / ds.fps
         cumulative_drift: float = 0.0
         first_breach_episode: int | None = None

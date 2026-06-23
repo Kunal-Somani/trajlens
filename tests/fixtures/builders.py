@@ -158,6 +158,33 @@ def build_v3_dataset(
     (video_dir / "file-000.mp4").write_bytes(b"\x00")
 
 
+def build_v3_dataset_no_frame_index(
+    root: Path,
+    *,
+    num_episodes: int = 3,
+    camera: str = "top",
+    fps: int = 30,
+) -> None:
+    """Build a v3.0 dataset whose declared features lack a bare "frame_index".
+
+    Mirrors real multi-camera Hub datasets (e.g. imbench/pb-pr-cube-toss-v1)
+    that namespace frame index per camera stream (``frame_index.<camera>``)
+    instead of declaring a single global ``frame_index`` feature.
+    """
+    build_v3_dataset(root, num_episodes=num_episodes, camera=camera, fps=fps)
+
+    info_path = root / "meta" / "info.json"
+    info = json.loads(info_path.read_text())
+    del info["features"]["frame_index"]
+    info["features"][f"frame_index.{camera}"] = {"dtype": "int64", "shape": [1], "names": None}
+    info_path.write_text(json.dumps(info))
+
+    data_path = root / "data" / "chunk-000" / "file-000.parquet"
+    table = pq.read_table(data_path)
+    table = table.drop(["frame_index"])
+    pq.write_table(table, data_path)
+
+
 def build_v3_dataset_hub_tasks_schema(
     root: Path,
     *,
