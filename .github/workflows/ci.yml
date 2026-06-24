@@ -37,7 +37,12 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v6
         with:
-          python-version: "3.12"
+          # Must match pyproject.toml's [tool.mypy] python_version = "3.11":
+          # mypy resolves stub files (e.g. numpy's) against the interpreter
+          # it's actually running under, not just the python_version setting,
+          # so a 3.12 runner here hits 3.12-only stub syntax (a `type`
+          # statement) that mypy correctly rejects under a 3.11 target.
+          python-version: "3.11"
       - name: Install package + dev deps
         run: |
           uv pip install --system -e ".[dev]"
