@@ -101,6 +101,7 @@ ignore = [
 
 [tool.ruff.lint.per-file-ignores]
 "tests/**/*.py" = ["S101", "S105", "S106"]  # asserts and hardcoded strings OK in tests
+"scripts/**/*.py" = ["T201", "S603"]  # CLI scripts print progress; subprocess args are a list, not shell=True
 
 [tool.ruff.lint.isort]
 known-first-party = ["trajlens"]

@@ -158,6 +158,33 @@ def build_v3_dataset(
     (video_dir / "file-000.mp4").write_bytes(b"\x00")
 
 
+def build_v3_dataset_no_frame_index(
+    root: Path,
+    *,
+    num_episodes: int = 3,
+    camera: str = "top",
+    fps: int = 30,
+) -> None:
+    """Build a v3.0 dataset whose declared features lack a bare "frame_index".
+
+    Mirrors real multi-camera Hub datasets (e.g. imbench/pb-pr-cube-toss-v1)
+    that namespace frame index per camera stream (``frame_index.<camera>``)
+    instead of declaring a single global ``frame_index`` feature.
+    """
+    build_v3_dataset(root, num_episodes=num_episodes, camera=camera, fps=fps)
+
+    info_path = root / "meta" / "info.json"
+    info = json.loads(info_path.read_text())
+    del info["features"]["frame_index"]
+    info["features"][f"frame_index.{camera}"] = {"dtype": "int64", "shape": [1], "names": None}
+    info_path.write_text(json.dumps(info))
+
+    data_path = root / "data" / "chunk-000" / "file-000.parquet"
+    table = pq.read_table(data_path)
+    table = table.drop(["frame_index"])
+    pq.write_table(table, data_path)
+
+
 def build_v3_dataset_hub_tasks_schema(
     root: Path,
     *,
@@ -447,6 +474,106 @@ def build_v3_long_episode_no_drift(
     episodes_table = pa.table(columns)
     episodes_path = root / "meta" / "episodes" / "chunk-000" / "file-000.parquet"
     pq.write_table(episodes_table, episodes_path)
+
+
+def build_v3_float64_storage_no_drift(
+    root: Path,
+    *,
+    camera: str = "top",
+    fps: int = 15,
+    frames_per_episode: int = 50,
+    num_episodes: int = 3,
+) -> None:
+    """Build a v3.0 dataset with timestamps stored as float64, no real drift.
+
+    Mirrors real Hub datasets (e.g. exidekat/chessbot-lerobot) that declare
+    and store the timestamp feature as float64/double rather than the
+    DEFAULT_FEATURES float32. KNOWNBUG.TIMESTAMP_DRIFT used to always
+    quantize its ideal-value comparison to float32 regardless of the
+    declared dtype, which manufactured spurious cumulative drift against
+    float64-stored data (drift landing suspiciously exactly on the 1e-4
+    tolerance boundary within the first few episodes, not the late-episode
+    accumulation the #3177 fingerprint actually describes). Used to
+    regression-test that the check quantizes to the dataset's *declared*
+    dtype instead of assuming float32.
+    """
+    info_path = root / "meta" / "info.json"
+    data_path = root / "data" / "chunk-000" / "file-000.parquet"
+
+    frame_index: list[int] = []
+    episode_index: list[int] = []
+    timestamp: list[float] = []
+    index: list[int] = []
+    task_index: list[int] = []
+    frame = 0
+    for ep in range(num_episodes):
+        for fi in range(frames_per_episode):
+            frame_index.append(fi)
+            episode_index.append(ep)
+            timestamp.append(fi / fps)
+            index.append(frame)
+            task_index.append(0)
+            frame += 1
+
+    (root / "meta").mkdir(parents=True, exist_ok=True)
+    total_frames = num_episodes * frames_per_episode
+    features = {**DEFAULT_FEATURES, **_video_feature(camera)}
+    features["timestamp"] = {"dtype": "float64", "shape": [1], "names": None}
+    info = {
+        "codebase_version": "v3.0",
+        "fps": fps,
+        "features": features,
+        "total_episodes": num_episodes,
+        "total_frames": total_frames,
+    }
+    info_path.write_text(json.dumps(info))
+
+    data_path.parent.mkdir(parents=True, exist_ok=True)
+    new = pa.table(
+        {
+            "timestamp": pa.array(timestamp, type=pa.float64()),
+            "frame_index": pa.array(frame_index, type=pa.int64()),
+            "episode_index": pa.array(episode_index, type=pa.int64()),
+            "index": pa.array(index, type=pa.int64()),
+            "task_index": pa.array(task_index, type=pa.int64()),
+        }
+    )
+    pq.write_table(new, data_path)
+
+    episode_rows: list[dict[str, Any]] = []
+    for ep in range(num_episodes):
+        from_idx = ep * frames_per_episode
+        episode_rows.append(
+            {
+                "episode_index": ep,
+                "tasks": [DEFAULT_TASK],
+                "length": frames_per_episode,
+                "data/chunk_index": 0,
+                "data/file_index": 0,
+                "dataset_from_index": from_idx,
+                "dataset_to_index": from_idx + frames_per_episode,
+                "meta/episodes/chunk_index": 0,
+                "meta/episodes/file_index": 0,
+                f"videos/{camera}/chunk_index": 0,
+                f"videos/{camera}/file_index": 0,
+                f"videos/{camera}/from_timestamp": from_idx / fps,
+                f"videos/{camera}/to_timestamp": (from_idx + frames_per_episode) / fps,
+            }
+        )
+    columns = {key: [row[key] for row in episode_rows] for key in episode_rows[0]}
+    episodes_table = pa.table(columns)
+    episodes_dir = root / "meta" / "episodes" / "chunk-000"
+    episodes_dir.mkdir(parents=True, exist_ok=True)
+    pq.write_table(episodes_table, episodes_dir / "file-000.parquet")
+
+    tasks_table = pa.table(
+        {"task_index": pa.array([0], type=pa.int64()), "task": pa.array([DEFAULT_TASK])}
+    )
+    pq.write_table(tasks_table, root / "meta" / "tasks.parquet")
+
+    video_dir = root / "videos" / camera / "chunk-000"
+    video_dir.mkdir(parents=True, exist_ok=True)
+    (video_dir / "file-000.mp4").write_bytes(b"\x00")
 
 
 def build_v3_missing_shard(root: Path, *, camera: str = "top") -> None:

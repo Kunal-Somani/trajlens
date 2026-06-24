@@ -19,6 +19,8 @@ from tests.fixtures.builders import (
     build_v3_bad_timestamp_spacing,
     build_v3_corrupt_video,
     build_v3_dataset,
+    build_v3_dataset_no_frame_index,
+    build_v3_float64_storage_no_drift,
     build_v3_long_episode_no_drift,
     build_v3_metadata_data_disagreement,
     build_v3_missing_shard,
@@ -338,6 +340,19 @@ class TestIndexContinuity:
         result = INDEX_CONTINUITY.run(_load(tmp_path), CTX)
         assert result.severity is Severity.INFO
 
+    def test_no_frame_index_feature_skipped(self, tmp_path: Path) -> None:
+        """Regression test: dataset with no bare 'frame_index' feature.
+
+        Mirrors real multi-camera Hub datasets (e.g. imbench/pb-pr-cube-toss-v1)
+        that namespace frame index per camera (frame_index.<camera>) instead of
+        declaring a global frame_index feature. Must emit a clean INFO/SKIP
+        instead of crashing into the ADR-003 catch-all as an ERROR.
+        """
+        build_v3_dataset_no_frame_index(tmp_path)
+        result = INDEX_CONTINUITY.run(_load(tmp_path), CTX)
+        assert result.severity is Severity.INFO
+        assert "skipped" in result.message.lower()
+
 
 # ---------------------------------------------------------------------------
 # STRUCTURAL.METADATA_DATA_AGREEMENT
@@ -542,6 +557,34 @@ class TestTimestampDrift:
         result = TIMESTAMP_DRIFT.run(_load(tmp_path), CTX)
         assert result.severity is Severity.FAIL
         assert "#3177" in result.message
+
+    def test_float64_storage_no_drift_passes(self, tmp_path: Path) -> None:
+        """Regression test: float64-stored timestamps must not false-fire.
+
+        Mirrors the real exidekat/chessbot-lerobot false positive: info.json
+        declares the timestamp feature as float64, not the default float32.
+        Quantizing the ideal comparison value to float32 regardless of the
+        declared dtype manufactured spurious cumulative drift that breached
+        tolerance within the first few episodes -- the fix must quantize to
+        whatever dtype is actually declared/stored.
+        """
+        build_v3_float64_storage_no_drift(tmp_path, fps=15, frames_per_episode=50, num_episodes=3)
+        result = TIMESTAMP_DRIFT.run(_load(tmp_path), CTX)
+        assert result.severity is Severity.INFO
+        assert result.details["cumulative_drift_s"] < 1e-6
+
+    def test_no_frame_index_feature_skipped(self, tmp_path: Path) -> None:
+        """Regression test: dataset with no bare 'frame_index' feature.
+
+        Mirrors real multi-camera Hub datasets (e.g. imbench/pb-pr-cube-toss-v1)
+        that namespace frame index per camera (frame_index.<camera>) instead of
+        declaring a global frame_index feature. Must emit a clean INFO/SKIP
+        instead of crashing into the ADR-003 catch-all as an ERROR.
+        """
+        build_v3_dataset_no_frame_index(tmp_path)
+        result = TIMESTAMP_DRIFT.run(_load(tmp_path), CTX)
+        assert result.severity is Severity.INFO
+        assert "skipped" in result.message.lower()
 
 
 # ---------------------------------------------------------------------------

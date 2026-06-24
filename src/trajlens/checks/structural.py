@@ -167,6 +167,18 @@ class _IndexContinuityCheck:
     requires_video = False
 
     def run(self, ds: CanonicalDataset, ctx: CheckContext) -> CheckResult:
+        if "frame_index" not in ds.features:
+            return CheckResult(
+                check_id=self.id,
+                severity=Severity.INFO,
+                message=(
+                    "Skipped STRUCTURAL.INDEX_CONTINUITY: dataset has no bare "
+                    "'frame_index' feature (e.g. multi-camera datasets namespace "
+                    "it as 'frame_index.<camera>'). See STRUCTURAL.SCHEMA_CONSISTENCY "
+                    "for schema details."
+                ),
+            )
+
         violations: list[str] = []
 
         # Episode-level: indices must be 0..N-1 contiguously.

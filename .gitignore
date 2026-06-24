@@ -38,3 +38,5 @@ htmlcov/
 # trajlens runtime artifacts
 *.html.report
 audit_results/
+audit_results_*.json
+audit_summary_*.txt

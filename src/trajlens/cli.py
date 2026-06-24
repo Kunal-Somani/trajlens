@@ -79,14 +79,23 @@ def lint(
     from trajlens.checks.protocol import CheckResult
     from trajlens.errors import DatasetError
     from trajlens.model import build_canonical_dataset
-    from trajlens.report import render_html, render_json, render_sarif, render_terminal
+    from trajlens.report import (
+        render_html,
+        render_json,
+        render_json_load_error,
+        render_sarif,
+        render_terminal,
+    )
     from trajlens.sources.loader import SourceLoader
 
     try:
         handle = SourceLoader().resolve(ref)
         ds = build_canonical_dataset(handle)
     except DatasetError as exc:
-        typer.echo(f"ERROR: Could not load dataset {ref!r}: {exc}", err=True)
+        if json_output:
+            typer.echo(render_json_load_error(ref, type(exc).__name__, str(exc)))
+        else:
+            typer.echo(f"ERROR: Could not load dataset {ref!r}: {exc}", err=True)
         raise typer.Exit(code=2) from exc
 
     ctx = CheckContext(deep=deep)

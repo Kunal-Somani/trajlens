@@ -204,10 +204,36 @@ class _TimestampDriftCheck:
     requires_video = False
 
     def run(self, ds: CanonicalDataset, ctx: CheckContext) -> CheckResult:
+        if "frame_index" not in ds.features:
+            return CheckResult(
+                check_id=self.id,
+                severity=Severity.INFO,
+                message=(
+                    "Skipped KNOWNBUG.TIMESTAMP_DRIFT: dataset has no bare "
+                    "'frame_index' feature (e.g. multi-camera datasets namespace "
+                    "it as 'frame_index.<camera>'). See STRUCTURAL.SCHEMA_CONSISTENCY "
+                    "for schema details."
+                ),
+            )
+
         ideal_frame_duration = 1.0 / ds.fps
         cumulative_drift: float = 0.0
         first_breach_episode: int | None = None
         first_breach_drift: float = 0.0
+
+        # Quantize the ideal value to the *declared* storage dtype before
+        # differencing, so both sides round the same way. info.json's
+        # features map states whether timestamp is float32 or float64;
+        # assuming float32 unconditionally manufactures spurious cumulative
+        # drift against float64-stored datasets (the representation error
+        # term cancels out only when the comparison matches what's actually
+        # on disk).
+        declared_dtype = ds.features.get("timestamp")
+        quantize: type[np.float32] | type[np.float64] = (
+            np.float64
+            if declared_dtype is not None and declared_dtype.dtype == "float64"
+            else np.float32
+        )
 
         cache = ShardColumnCache(["frame_index", "timestamp"])
         for episode in ds:
@@ -218,13 +244,7 @@ class _TimestampDriftCheck:
             ]
 
             for frame_index, stored_ts in ep_rows:
-                # Stored timestamps are persisted as float32 (info.json declares
-                # dtype="float32" for the timestamp feature). Quantize the ideal
-                # value to float32 too before differencing, so both sides round
-                # the same way and the comparison isn't dominated by float32
-                # representation error on fps values like 1/10 that have no
-                # exact binary representation.
-                ideal_ts = float(np.float32(frame_index * ideal_frame_duration))
+                ideal_ts = float(quantize(frame_index * ideal_frame_duration))
                 cumulative_drift += abs(stored_ts - ideal_ts)
                 if cumulative_drift > _DECODER_TOLERANCE_S and first_breach_episode is None:
                     first_breach_episode = episode.episode_index

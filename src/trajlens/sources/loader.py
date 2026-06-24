@@ -101,7 +101,7 @@ class SourceLoader:
 
     def _resolve_hub(self, repo_id: str, revision: str | None) -> Path:
         try:
-            from huggingface_hub import HfApi, RepoFile, hf_hub_download
+            from huggingface_hub import snapshot_download
         except ImportError as exc:
             raise SourceResolutionError(
                 f"{repo_id!r} is not a local path, and the optional Hub "
@@ -126,23 +126,36 @@ class SourceLoader:
             # Resolving only needs meta/ to detect version and parse info.json;
             # data/video shards are fetched lazily when actually opened. Mirrors
             # lerobot's own metadata-only pull (dataset_metadata.py _pull_from_repo).
-            api = HfApi()
-            tree = api.list_repo_tree(
+            #
+            # snapshot_download (not a per-file hf_hub_download loop) because
+            # each hf_hub_download call pays a fixed ~2-4s connection/request
+            # overhead regardless of file size -- sequentially downloading the
+            # ~15 small meta/ files this way takes 30-40s. snapshot_download
+            # fetches the matched files with its own internal thread pool,
+            # cutting the same fetch to a few seconds (measured: 42s -> 5s on
+            # a 16-file meta/ tree).
+            snapshot_download(
                 repo_id=repo_id,
                 repo_type="dataset",
                 revision=revision,
-                path_in_repo="meta",
-                recursive=True,
+                allow_patterns=["meta/**"],
+                local_dir=local_dir,
             )
-            meta_files = [item.path for item in tree if isinstance(item, RepoFile)]
-            for f in meta_files:
-                hf_hub_download(
-                    repo_id=repo_id,
-                    filename=f,
-                    repo_type="dataset",
-                    revision=revision,
-                    local_dir=local_dir,
+            # Unlike a per-file 404 from the old list_repo_tree+hf_hub_download
+            # loop, snapshot_download with allow_patterns matching nothing
+            # (no meta/ directory in the repo at all -- e.g. a non-LeRobot
+            # repo, or one that nests data under an episode subdirectory)
+            # succeeds silently with zero files copied. Check for that case
+            # explicitly so it surfaces here as a clear resolution error
+            # instead of a confusing "missing meta/info.json" further down.
+            if not (local_dir / "meta").is_dir():
+                raise SourceResolutionError(
+                    f"could not resolve {repo_id!r}: it is not a local directory, "
+                    f"and the Hugging Face Hub repo has no meta/ directory "
+                    f"(not a LeRobotDataset)."
                 )
+        except SourceResolutionError:
+            raise
         except Exception as exc:
             raise SourceResolutionError(
                 f"could not resolve {repo_id!r}: it is not a local directory "

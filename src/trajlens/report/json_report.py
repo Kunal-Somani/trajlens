@@ -75,3 +75,26 @@ def render_json(
         ],
     }
     return json.dumps(payload, indent=2)
+
+
+def render_json_load_error(ref: str, error_category: str, message: str) -> str:
+    """Return a JSON string for a dataset that failed to load before any checks ran.
+
+    Mirrors the schema of :func:`render_json` (ref, grade, results) so
+    consumers parsing ``--json`` output never have to special-case a missing
+    key — ``results`` is just empty and ``error_category``/``error_message``
+    explain why.
+    """
+    payload: dict[str, object] = {
+        "ref": ref,
+        "version": None,
+        "trust_score": None,
+        "score_formula_version": SCORE_FORMULA_VERSION,
+        "grade": "ERROR",
+        "num_episodes": None,
+        "num_frames": None,
+        "error_category": error_category,
+        "error_message": message,
+        "results": [],
+    }
+    return json.dumps(payload, indent=2)
