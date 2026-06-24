@@ -67,6 +67,33 @@ class TestResolveHubMocked:
         ):
             SourceLoader().resolve("org/does-not-exist")
 
+    def test_hub_repo_with_no_meta_directory_raises_source_resolution_error(
+        self, tmp_path: Path
+    ) -> None:
+        # snapshot_download(allow_patterns=["meta/**"]) succeeds silently with
+        # zero files copied when the repo has no meta/ directory at all (e.g.
+        # a repo that isn't a LeRobotDataset). That must surface here as a
+        # clear resolution error, not as a confusing downstream "missing
+        # meta/info.json" once build_canonical_dataset tries to read it.
+        def mock_snapshot_download_no_meta(
+            repo_id: str,
+            repo_type: str,
+            revision: str | None,
+            allow_patterns: list[str],
+            local_dir: str,
+            **kwargs: Any,
+        ) -> str:
+            return str(local_dir)  # nothing matched allow_patterns; no files copied
+
+        with (
+            patch(
+                "huggingface_hub.snapshot_download",
+                side_effect=mock_snapshot_download_no_meta,
+            ),
+            pytest.raises(SourceResolutionError, match="no meta/ directory"),
+        ):
+            SourceLoader().resolve("org/not-a-lerobot-dataset")
+
     def test_hub_repo_resolves_via_downloaded_snapshot(self, tmp_path: Path) -> None:
         snapshot_dir = tmp_path / "fake-snapshot"
         snapshot_dir.mkdir()

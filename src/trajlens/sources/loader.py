@@ -141,6 +141,21 @@ class SourceLoader:
                 allow_patterns=["meta/**"],
                 local_dir=local_dir,
             )
+            # Unlike a per-file 404 from the old list_repo_tree+hf_hub_download
+            # loop, snapshot_download with allow_patterns matching nothing
+            # (no meta/ directory in the repo at all -- e.g. a non-LeRobot
+            # repo, or one that nests data under an episode subdirectory)
+            # succeeds silently with zero files copied. Check for that case
+            # explicitly so it surfaces here as a clear resolution error
+            # instead of a confusing "missing meta/info.json" further down.
+            if not (local_dir / "meta").is_dir():
+                raise SourceResolutionError(
+                    f"could not resolve {repo_id!r}: it is not a local directory, "
+                    f"and the Hugging Face Hub repo has no meta/ directory "
+                    f"(not a LeRobotDataset)."
+                )
+        except SourceResolutionError:
+            raise
         except Exception as exc:
             raise SourceResolutionError(
                 f"could not resolve {repo_id!r}: it is not a local directory "
