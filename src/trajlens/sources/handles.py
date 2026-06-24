@@ -46,7 +46,16 @@ def open_video_shard(path: Path) -> VideoShardHandle:
 
 
 def open_hub_parquet_shard(repo_id: str, revision: str | None, path: str) -> pq.ParquetFile:
-    """Open a Parquet shard lazily over HTTP from the Hugging Face Hub."""
+    """Open a Parquet shard lazily over HTTP from the Hugging Face Hub.
+
+    Uses fsspec's "all" cache strategy: pyarrow's Parquet reader normally
+    issues dozens of small seek-and-read calls per file (footer, then each
+    column chunk), and over HTTP each becomes its own multi-hundred-ms round
+    trip — 100+ reads inflate a sub-3MB shard fetch into 10s+ even though the
+    underlying byte count is trivial. Reading the whole (small, LeRobot
+    metadata/data shard) file in one request collapses that to a single
+    round trip, since these shards are always small enough to fit in memory.
+    """
     try:
         from huggingface_hub import HfFileSystem
     except ImportError as exc:
@@ -54,7 +63,7 @@ def open_hub_parquet_shard(repo_id: str, revision: str | None, path: str) -> pq.
 
     fs = HfFileSystem(revision=revision)
     try:
-        f = fs.open(f"datasets/{repo_id}/{path}", "rb")
+        f = fs.open(f"datasets/{repo_id}/{path}", "rb", cache_type="all")
         return pq.ParquetFile(f)  # type: ignore[no-untyped-call]
     except Exception as exc:
         raise DatasetFormatError(

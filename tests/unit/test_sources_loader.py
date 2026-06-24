@@ -62,7 +62,7 @@ class TestResolveLocal:
 class TestResolveHubMocked:
     def test_hub_repo_not_found_raises_source_resolution_error(self, tmp_path: Path) -> None:
         with (
-            patch("huggingface_hub.HfApi.list_repo_tree", side_effect=Exception("404")),
+            patch("huggingface_hub.snapshot_download", side_effect=Exception("404")),
             pytest.raises(SourceResolutionError, match="could not resolve"),
         ):
             SourceLoader().resolve("org/does-not-exist")
@@ -72,40 +72,24 @@ class TestResolveHubMocked:
         snapshot_dir.mkdir()
         build_v3_dataset(snapshot_dir, num_episodes=1)
 
-        def mock_download(
+        def mock_snapshot_download(
             repo_id: str,
-            filename: str,
             repo_type: str,
             revision: str | None,
+            allow_patterns: list[str],
             local_dir: str,
             **kwargs: Any,
         ) -> str:
-            src = snapshot_dir / filename
-            dest = Path(local_dir) / filename
-            dest.parent.mkdir(parents=True, exist_ok=True)
-            if src.exists():
-                dest.write_bytes(src.read_bytes())
-            return str(dest)
+            for src in snapshot_dir.glob("meta/**/*"):
+                if src.is_file():
+                    dest = Path(local_dir) / src.relative_to(snapshot_dir)
+                    dest.parent.mkdir(parents=True, exist_ok=True)
+                    dest.write_bytes(src.read_bytes())
+            return str(local_dir)
 
-        from unittest.mock import MagicMock
-
-        from huggingface_hub import RepoFile
-
-        def make_mock_file(path_str: str) -> MagicMock:
-            m = MagicMock(spec=RepoFile)
-            m.path = path_str
-            return m
-
-        mock_files = [
-            make_mock_file(str(p.relative_to(snapshot_dir)))
-            for p in snapshot_dir.glob("meta/**/*")
-            if p.is_file()
-        ]
-
-        with (
-            patch("huggingface_hub.HfApi.list_repo_tree", return_value=mock_files) as mock_list,
-            patch("huggingface_hub.hf_hub_download", side_effect=mock_download) as mock_dl,
-        ):
+        with patch(
+            "huggingface_hub.snapshot_download", side_effect=mock_snapshot_download
+        ) as mock_dl:
             handle = SourceLoader().resolve("org/fake-repo")
 
         # The root is now the computed local_dir, not snapshot_dir directly
@@ -113,17 +97,13 @@ class TestResolveHubMocked:
         assert handle.root.parent.name == "org--fake-repo"
         assert handle.version is DatasetVersion.V3_0
 
-        mock_list.assert_called_once_with(
+        mock_dl.assert_called_once_with(
             repo_id="org/fake-repo",
             repo_type="dataset",
             revision=None,
-            path_in_repo="meta",
-            recursive=True,
+            allow_patterns=["meta/**"],
+            local_dir=handle.root,
         )
-        assert mock_dl.call_count == len(mock_files)
-        called_files = [call.kwargs.get("filename") for call in mock_dl.call_args_list]
-        expected_files = [m.path for m in mock_files]
-        assert sorted(called_files) == sorted(expected_files)
 
 
 class TestSourceHandleShardAccess:
@@ -144,3 +124,28 @@ class TestSourceHandleShardAccess:
         handle = SourceLoader().resolve(str(tmp_path))
         with pytest.raises(PathTraversalError):
             handle.parquet_shard("..", "..", "etc", "passwd")
+
+    def test_hub_parquet_shard_fetched_once_per_shard_not_per_episode(self, tmp_path: Path) -> None:
+        # Real v3.0 Hub datasets pack many episodes into one chunk-*/file-*
+        # shard (chunks_size up to 1000). A check that loops `for episode in
+        # ds: ds.parquet_shard_for_episode(episode)` must hit the network
+        # once per *shard*, not once per *episode* -- otherwise a 125-episode,
+        # single-shard dataset pays 125 round trips for data that lives in one
+        # file. This is what SourceHandle._parquet_cache exists to prevent.
+        from dataclasses import replace
+
+        from trajlens.sources.handles import open_parquet_shard
+
+        build_v3_dataset(tmp_path, num_episodes=10)
+        local_handle = SourceLoader().resolve(str(tmp_path))
+        hub_handle = replace(local_handle, repo_id="org/repo", revision=None)
+        shard_path = local_handle.root / "data" / "chunk-000" / "file-000.parquet"
+
+        with patch(
+            "trajlens.sources.handles.open_hub_parquet_shard",
+            side_effect=lambda *a, **kw: open_parquet_shard(shard_path),
+        ) as mock_open:
+            for _ in range(10):  # simulate one parquet_shard() call per episode
+                hub_handle.parquet_shard("data", "chunk-000", "file-000.parquet")
+
+        mock_open.assert_called_once()
