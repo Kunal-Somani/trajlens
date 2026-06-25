@@ -37,6 +37,48 @@ Exit codes follow lint-tool convention: `0` = clean, `1` = WARN present, `2` = F
 
 By default, checks that require materializing a lot of data over the network (full video decode, per-frame stats reconciliation) are skipped for Hub datasets and reported as INFO/skipped rather than run. Pass `--deep` to force them; expect this to be significantly slower and to fetch the full dataset.
 
+## Architecture
+
+```mermaid
+graph TD
+  subgraph Interfaces
+    CLI[CLI - typer]
+    WEB[Web dashboard - FastAPI + React, optional]
+    SDK[Python SDK / import]
+  end
+
+  subgraph Core
+    LOADER[Dataset Source Layer<br/>local + Hub, version-aware]
+    MODEL[Canonical Dataset Model<br/>typed in-memory view]
+    REGISTRY[Check Registry<br/>pluggable rules]
+    ENGINE[Check Engine<br/>runs checks, bounded]
+    REPORT[Report Builder<br/>terminal / json / html / sarif]
+    REPAIR[Repair Engine<br/>dry-run, diff, opt-in]
+  end
+
+  subgraph Synthesis [Pillar 3, later]
+    SIMBK[Sim Backend Protocol<br/>MuJoCo default]
+    AUG[Trajectory Augmenter<br/>MimicGen-style]
+    DR[Domain Randomizer]
+    WRITER[LeRobotDataset Writer]
+  end
+
+  CLI --> LOADER
+  WEB --> LOADER
+  SDK --> LOADER
+  LOADER --> MODEL
+  MODEL --> ENGINE
+  REGISTRY --> ENGINE
+  ENGINE --> REPORT
+  MODEL --> REPAIR
+  REPAIR --> WRITER
+  SIMBK --> AUG --> DR --> WRITER
+  WRITER --> MODEL
+  REPORT --> WEB
+  HUB[(Hugging Face Hub)] <--> LOADER
+  HUB <--> WRITER
+```
+
 ## What it checks
 
 trajlens validates a [LeRobotDataset](https://github.com/huggingface/lerobot) (v2.0, v2.1, or v3.0) against its own declared metadata, independent of any particular consumer's assumptions. Checks are grouped by category and run as a check engine over each dataset:
