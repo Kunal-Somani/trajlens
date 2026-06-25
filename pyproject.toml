@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "trajlens"
-version = "0.1.0.dev0"
+version = "0.1.0"
 description = "The quality and synthesis layer for the open robot-learning data ecosystem."
 readme = "README.md"
 license = { text = "Apache-2.0" }

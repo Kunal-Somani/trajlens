@@ -37,6 +37,48 @@ Exit codes follow lint-tool convention: `0` = clean, `1` = WARN present, `2` = F
 
 By default, checks that require materializing a lot of data over the network (full video decode, per-frame stats reconciliation) are skipped for Hub datasets and reported as INFO/skipped rather than run. Pass `--deep` to force them; expect this to be significantly slower and to fetch the full dataset.
 
+## Architecture
+
+```mermaid
+graph TD
+  subgraph Interfaces
+    CLI[CLI - typer]
+    WEB[Web dashboard - FastAPI + React, optional]
+    SDK[Python SDK / import]
+  end
+
+  subgraph Core
+    LOADER[Dataset Source Layer<br/>local + Hub, version-aware]
+    MODEL[Canonical Dataset Model<br/>typed in-memory view]
+    REGISTRY[Check Registry<br/>pluggable rules]
+    ENGINE[Check Engine<br/>runs checks, bounded]
+    REPORT[Report Builder<br/>terminal / json / html / sarif]
+    REPAIR[Repair Engine<br/>dry-run, diff, opt-in]
+  end
+
+  subgraph Synthesis [Pillar 3, later]
+    SIMBK[Sim Backend Protocol<br/>MuJoCo default]
+    AUG[Trajectory Augmenter<br/>MimicGen-style]
+    DR[Domain Randomizer]
+    WRITER[LeRobotDataset Writer]
+  end
+
+  CLI --> LOADER
+  WEB --> LOADER
+  SDK --> LOADER
+  LOADER --> MODEL
+  MODEL --> ENGINE
+  REGISTRY --> ENGINE
+  ENGINE --> REPORT
+  MODEL --> REPAIR
+  REPAIR --> WRITER
+  SIMBK --> AUG --> DR --> WRITER
+  WRITER --> MODEL
+  REPORT --> WEB
+  HUB[(Hugging Face Hub)] <--> LOADER
+  HUB <--> WRITER
+```
+
 ## What it checks
 
 trajlens validates a [LeRobotDataset](https://github.com/huggingface/lerobot) (v2.0, v2.1, or v3.0) against its own declared metadata, independent of any particular consumer's assumptions. Checks are grouped by category and run as a check engine over each dataset:
@@ -81,6 +123,17 @@ These figures are from a single 100-dataset random sample (raw results: see the 
 Of the 47 load-time ERRORs, none are trajlens bugs: about half (24) are the documented v0.1 limitation that v2.x Hub datasets can't be lazily streamed (shard paths are implicit and require a local filesystem to glob), and the rest are dead/mistagged Hub references, repos that aren't actually LeRobotDatasets (no `meta/` directory at the repo root), or genuinely malformed `meta/info.json` (wrong dtype, missing required fields) on the dataset's side.
 
 TIMEOUTs were investigated as a possible performance bug rather than accepted as an inherent network ceiling: profiling two small, previously-timing-out datasets (`abdul004/so101_multi_task_v1`, 125 episodes; `Elvinky/pick_green_block_into_box`, 102 episodes) found that loading a dataset's metadata over Hub HTTP was issuing dozens of small, separately-latency-bound reads per Parquet shard, and downloading the `meta/` file tree one file at a time. Fixing both (single whole-shard fetch instead of scattered reads; parallelized `meta/` download) brought those two datasets from 60s+ timeouts down to 33s and 11s respectively, and cut the audit's overall TIMEOUT count and mean per-dataset duration by roughly a third in before/after sampling. The remaining TIMEOUTs are concentrated in genuinely large multi-thousand-episode shards, where 60s is a real infra ceiling rather than a fixable inefficiency.
+
+### Launch audit findings
+
+Of the 81 datasets that reached a grade (excluding ERROR/TIMEOUT, where no check ever ran), two known upstream `lerobot` bugs accounted for a meaningful share of the failures:
+
+| Known bug | Prevalence (of successfully-linted datasets) |
+|---|---|
+| `KNOWNBUG.TIMESTAMP_DRIFT` ([#3177](https://github.com/huggingface/lerobot/issues/3177)) | 3.1% |
+| `STRUCTURAL.METADATA_DATA_AGREEMENT` ([#2401](https://github.com/huggingface/lerobot/issues/2401)) | 18.8% |
+
+`audit_hub.py` resamples a fresh random subset of `lerobot`-tagged Hub datasets on every run, so these are not a fixed, reproducible distribution — rerunning the audit will not return the same percentages, only a similarly-shaped one. Raw per-dataset results behind these specific numbers are attached to the `v0.1.0` GitHub release as `audit_results_100.json` and `audit_summary_100.txt`.
 
 ## Performance note: Hub vs. local
 
