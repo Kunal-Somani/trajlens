@@ -4,6 +4,8 @@ The quality and synthesis layer for the open robot-learning data ecosystem.
 
 ruff for robot data — lint, fix, and generate clean LeRobotDataset datasets.
 
+![trajlens demo](docs/assets/demo.gif)
+
 ## Status
 
 Pre-v0.1 (`0.1.0.dev0`), under active development. Not yet on PyPI.
