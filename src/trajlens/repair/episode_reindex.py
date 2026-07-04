@@ -29,6 +29,23 @@ ADR-004 requirements satisfied here:
     tests/property/test_episode_reindex_properties.py verify repair ->
     re-lint -> INFO, plus a semantic-correctness assertion that repaired
     boundaries select the RIGHT frames, not merely consistent counts.
+
+KNOWN SCOPE BOUNDARY -- correctness is conditional on the ``index`` column
+being trustworthy: this fixer's entire ground-truth derivation rests on each
+data row's ``index`` value being the writer's real, original global position
+(03_DATA_FORMAT_SPEC.md §2 confirms this against the live lerobot 0.5.2
+writer). If a dataset's ``index`` column is itself corrupted in a way that is
+*internally self-consistent* per episode -- contiguous, non-overlapping
+ranges, just not what the writer actually assigned (e.g. two episodes'
+``index`` ranges silently swapped) -- this fixer has no independent signal to
+detect that and will "repair" the episode metadata to agree with the
+corrupted ``index`` values. This is an accepted, documented design boundary,
+not a bug: there is no second independent ground-truth column in the v3.0
+format to cross-check ``index`` against. A missing or structurally
+inconsistent ``index`` column (absent from the schema, non-contiguous,
+overlapping, or interleaved) IS caught and raises RepairError -- see
+_derive_true_episode_ranges. Only self-consistent-but-wrong corruption of
+``index`` itself falls outside this fixer's detection.
 """
 
 from __future__ import annotations
@@ -267,6 +284,15 @@ def _derive_true_episode_ranges(ds: CanonicalDataset) -> dict[int, tuple[int, in
         if id(pf) in seen_shard_ids:
             continue
         seen_shard_ids.add(id(pf))
+
+        shard_columns = pf.schema_arrow.names
+        missing = [c for c in ("episode_index", "index") if c not in shard_columns]
+        if missing:
+            raise RepairError(
+                f"episode {episode.episode_index}'s data shard is missing required "
+                f"column(s) {missing}; cannot derive a true boundary without them. "
+                "This dataset cannot be safely repaired."
+            )
 
         table = pf.read(columns=["episode_index", "index"])  # type: ignore[no-untyped-call]
         ep_col: list[Any] = table.column("episode_index").to_pylist()

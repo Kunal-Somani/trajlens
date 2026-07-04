@@ -10,7 +10,9 @@ it claims to repair (06_SECURITY_AND_THREAT_MODEL.md T9):
   - Refusal: internally-inconsistent data → RepairError, zero output written.
   - Dry-run zero-write (mtime pattern).
   - No-op: already-consistent dataset → noop Diff, apply is a pure copy.
-  - Two failure modes: missing episode metadata, corrupt episode metadata parquet.
+  - Failure modes: missing episode metadata, corrupt episode metadata parquet,
+    and a missing 'index' column in the data shard (regression guard: this used
+    to crash with a raw pyarrow KeyError instead of RepairError).
 """
 
 from __future__ import annotations
@@ -24,6 +26,7 @@ import pytest
 from tests.fixtures.builders import (
     build_v2_dataset,
     build_v3_corrupt_episode_metadata,
+    build_v3_data_missing_index_column,
     build_v3_dataset,
     build_v3_interleaved_episode_data,
     build_v3_metadata_data_disagreement,
@@ -554,3 +557,24 @@ class TestFailureModes:
 
         with pytest.raises((RepairError, DatasetFormatError, pa.lib.ArrowInvalid)):
             _load(source)
+
+    def test_missing_index_column_raises_repair_error(self, tmp_path: Path) -> None:
+        """A data shard missing the global 'index' column must be refused cleanly.
+
+        Regression guard: pf.read(columns=[...]) silently drops unknown column
+        names instead of raising, so without an explicit schema check this
+        used to crash with a raw pyarrow KeyError instead of RepairError.
+        """
+        source = tmp_path / "source"
+        output = tmp_path / "repaired"
+        build_v3_data_missing_index_column(source, num_episodes=2)
+
+        fixer = EpisodeReindexFixer()
+        ds = _load(source)
+
+        with pytest.raises(RepairError, match="missing required column"):
+            fixer.dry_run(ds)
+
+        with pytest.raises(RepairError):
+            fixer.apply(ds, output)
+        assert not output.exists(), "apply() must not write any output when refusing to repair"

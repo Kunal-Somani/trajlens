@@ -453,6 +453,24 @@ def build_v3_overlapping_index_ranges(
     pq.write_table(new, data_path)
 
 
+def build_v3_data_missing_index_column(
+    root: Path, *, camera: str = "top", num_episodes: int = 2
+) -> None:
+    """Build a v3.0 dataset whose data shard is missing the global 'index' column.
+
+    EpisodeReindexFixer's ground-truth derivation depends entirely on 'index'
+    being present (03_DATA_FORMAT_SPEC.md §2). Without it there is no
+    independent source of truth to reconstruct dataset_from_index/
+    dataset_to_index/length from, so the fixer must refuse with RepairError
+    rather than crash on a raw pyarrow KeyError.
+    """
+    build_v3_dataset(root, num_episodes=num_episodes, camera=camera)
+    data_path = root / "data" / "chunk-000" / "file-000.parquet"
+    old = pq.read_table(data_path)
+    new = old.drop(["index"])
+    pq.write_table(new, data_path)
+
+
 def build_v3_interleaved_episode_data(
     root: Path, *, camera: str = "top", num_episodes: int = 2
 ) -> None:
