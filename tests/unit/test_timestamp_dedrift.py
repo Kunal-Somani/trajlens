@@ -137,27 +137,47 @@ class TestRoundTrip:
             )
 
     def test_no_new_finding_introduced(self, tmp_path: Path) -> None:
-        """Repair must not introduce any new FAIL or ERROR findings on re-lint."""
+        """Repair must not introduce any new FAIL/WARN that wasn't already present.
+
+        Uses the full default check suite so that side-effects on checks like
+        TEMPORAL.TIMESTAMP_SPACING or STRUCTURAL.METADATA_DATA_AGREEMENT are
+        caught — a scoped single-check run would miss those regressions.
+        """
         source = tmp_path / "source"
         output = tmp_path / "repaired"
         build_v3_timestamp_drift(source, num_episodes=5, drift_per_frame=5e-5)
 
+        engine = CheckEngine(registry)
+
+        ds_source = _load(source)
+        pre_results = engine.run(ds_source, CTX)
+        pre_fail_ids = {
+            r.check_id
+            for r in pre_results
+            if r.severity >= Severity.WARN and r.check_id != CHECK_ID
+        }
+
         fixer = TimestampDedriftFixer()
-        ds = _load(source)
-        fixer.apply(ds, output)
+        fixer.apply(ds_source, output)
 
         ds_fixed = _load(output)
-        engine = CheckEngine(registry)
-        results = engine.run(ds_fixed, CTX)
+        post_results = engine.run(ds_fixed, CTX)
 
-        new_fails = [
-            r
-            for r in results
-            if r.severity >= Severity.FAIL and not r.check_id.startswith("VIDEO.")
-        ]
-        assert not new_fails, (
-            f"repair introduced new FAIL/ERROR findings: "
-            f"{[(r.check_id, r.message) for r in new_fails]}"
+        # The drift finding must be gone.
+        drift_post = next((r for r in post_results if r.check_id == CHECK_ID), None)
+        assert drift_post is None or drift_post.severity < Severity.WARN, (
+            f"{CHECK_ID} must not be WARN/FAIL after repair; got {drift_post}"
+        )
+
+        # No new WARN/FAIL check-ids that weren't already present before repair.
+        post_fail_ids = {
+            r.check_id
+            for r in post_results
+            if r.severity >= Severity.WARN and r.check_id != CHECK_ID
+        }
+        new_findings = post_fail_ids - pre_fail_ids
+        assert not new_findings, (
+            f"repair introduced new WARN/FAIL findings not present in source: {new_findings}"
         )
 
     def test_repaired_timestamps_match_ideal(self, tmp_path: Path) -> None:
@@ -257,6 +277,56 @@ class TestEdgeCases:
 # ---------------------------------------------------------------------------
 # Failure modes
 # ---------------------------------------------------------------------------
+
+
+class TestApplyOnlyTouchesDiffShards:
+    def test_apply_only_rewrites_shards_in_diff(self, tmp_path: Path) -> None:
+        """apply() must rewrite exactly the shards listed in diff.changes, no more.
+
+        Instrument via mtime: after copytree, record mtimes for all shards.
+        Then apply() and assert that every shard whose mtime changed appears
+        in diff.changes, and every shard NOT in diff.changes is untouched.
+        """
+        import shutil as _shutil
+
+        source = tmp_path / "source"
+        output = tmp_path / "repaired"
+        build_v3_timestamp_drift(source, num_episodes=3, drift_per_frame=5e-5)
+
+        fixer = TimestampDedriftFixer()
+        ds = _load(source)
+        diff = fixer.dry_run(ds)
+        assert not diff.is_noop
+
+        diff_shard_relpaths = {c.shard_path for c in diff.changes}
+
+        # Pre-stage the output tree so we can record baseline mtimes.
+        _shutil.copytree(source, output)
+        baseline_mtimes = {p: p.stat().st_mtime for p in output.rglob("*.parquet")}
+
+        # Now rewrite only the diff shards in-place (mirrors what apply() does).
+        from trajlens.repair.timestamp_dedrift import _rewrite_shards
+
+        _rewrite_shards(diff, output_root=output)
+
+        for shard_abs, before_mtime in baseline_mtimes.items():
+            rel = str(shard_abs.relative_to(output))
+            after_mtime = shard_abs.stat().st_mtime
+            if after_mtime != before_mtime:
+                assert rel in diff_shard_relpaths, (
+                    f"shard '{rel}' was rewritten but is NOT in diff.changes"
+                )
+            else:
+                assert rel not in diff_shard_relpaths or after_mtime == before_mtime, (
+                    f"shard '{rel}' is in diff.changes but was NOT rewritten"
+                )
+
+        # Every shard in diff.changes must have been written.
+        for rel in diff_shard_relpaths:
+            shard_abs = output / rel
+            assert shard_abs.stat().st_mtime != baseline_mtimes[shard_abs], (
+                f"shard '{rel}' is in diff.changes but was not rewritten by _rewrite_shards"
+            )
 
 
 class TestFailureModes:

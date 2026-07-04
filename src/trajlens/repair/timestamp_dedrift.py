@@ -98,9 +98,8 @@ class TimestampDedriftFixer:
         root = _dataset_root(ds)
         changes: list[FrameChange] = []
 
-        # Scan all data shards directly — this avoids PyArrow internal access
-        # and works for multi-shard datasets.  The glob mirrors _V3Resolver and
-        # the fixture builders, both grounded in the live lerobot 0.5.2 writer.
+        # Single glob here — single-writer assumption: source directory must not
+        # be mutated by another process between dry_run() and apply().
         shard_paths = sorted(root.glob(_DATA_SHARD_GLOB))
         for shard_abs in shard_paths:
             shard_rel = str(shard_abs.relative_to(root))

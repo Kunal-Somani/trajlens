@@ -15,10 +15,11 @@ from hypothesis import given, settings
 from hypothesis import strategies as st
 
 from tests.fixtures.builders import build_v3_timestamp_drift
+from trajlens.checks import CheckEngine, registry
 from trajlens.checks.protocol import CheckContext, Severity
 from trajlens.checks.temporal import TIMESTAMP_DRIFT
 from trajlens.model import build_canonical_dataset
-from trajlens.repair.timestamp_dedrift import TimestampDedriftFixer
+from trajlens.repair.timestamp_dedrift import CHECK_ID, TimestampDedriftFixer
 from trajlens.sources.loader import SourceLoader
 
 CTX = CheckContext(deep=False)
@@ -35,12 +36,11 @@ def test_repair_then_relint_clears_timestamp_drift(
     num_episodes: int,
     drift_per_frame: float,
 ) -> None:
-    """Invariant: repair → re-lint always clears KNOWNBUG.TIMESTAMP_DRIFT.
+    """Invariant: repair → full re-lint clears KNOWNBUG.TIMESTAMP_DRIFT and adds no new findings.
 
-    For any (num_episodes, drift_per_frame) combination that triggers the
-    drift finding, applying TimestampDedriftFixer must produce a repaired
-    dataset on which KNOWNBUG.TIMESTAMP_DRIFT returns INFO (no longer a
-    FAIL).
+    Uses the full default check suite so that any side-effect on adjacent
+    checks (e.g. TEMPORAL.TIMESTAMP_SPACING, STRUCTURAL.METADATA_DATA_AGREEMENT)
+    is caught — a single-check run would miss those regressions.
     """
     root = tmp_path_factory.mktemp("prop-dedrift")
     source = root / "source"
@@ -57,15 +57,35 @@ def test_repair_then_relint_clears_timestamp_drift(
         # The drift was too small to fire — hypothesis will try other values.
         return
 
+    engine = CheckEngine(registry)
+
+    # Capture pre-repair WARN/FAIL check-ids (excluding the drift finding itself).
+    pre_results = engine.run(ds_source, CTX)
+    pre_fail_ids = {
+        r.check_id for r in pre_results if r.severity >= Severity.WARN and r.check_id != CHECK_ID
+    }
+
     fixer = TimestampDedriftFixer()
     fixer.apply(ds_source, output)
 
     handle_fixed = SourceLoader().resolve(str(output))
     ds_fixed = build_canonical_dataset(handle_fixed)
-    post_result = TIMESTAMP_DRIFT.run(ds_fixed, CTX)
+    post_results = engine.run(ds_fixed, CTX)
 
-    assert post_result.severity is Severity.INFO, (
+    # The drift finding must be gone (INFO or better).
+    drift_post = next((r for r in post_results if r.check_id == CHECK_ID), None)
+    assert drift_post is None or drift_post.severity < Severity.WARN, (
         f"KNOWNBUG.TIMESTAMP_DRIFT must be INFO after repair "
         f"(num_episodes={num_episodes}, drift_per_frame={drift_per_frame}). "
-        f"Got severity={post_result.severity!r}: {post_result.message}"
+        f"Got severity={drift_post.severity!r}: {drift_post.message}"
+    )
+
+    # No new WARN/FAIL findings that weren't already present before repair.
+    post_fail_ids = {
+        r.check_id for r in post_results if r.severity >= Severity.WARN and r.check_id != CHECK_ID
+    }
+    new_findings = post_fail_ids - pre_fail_ids
+    assert not new_findings, (
+        f"repair introduced new WARN/FAIL findings not present in source: {new_findings} "
+        f"(num_episodes={num_episodes}, drift_per_frame={drift_per_frame})"
     )
