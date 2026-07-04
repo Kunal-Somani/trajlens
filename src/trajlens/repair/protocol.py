@@ -37,17 +37,33 @@ class FrameChange:
 
 
 @dataclass(frozen=True, slots=True)
+class StatChange:
+    """A single feature-level stats change produced by a stats fixer's dry run.
+
+    feature        — the feature name whose stat entry would be rewritten.
+    stat_key       — the stat field being corrected (e.g. "mean", "std", "min", "max").
+    old_value      — the value currently stored in stats.json.
+    new_value      — the corrected value the fixer would write.
+    """
+
+    feature: str
+    stat_key: str
+    old_value: float
+    new_value: float
+
+
+@dataclass(frozen=True, slots=True)
 class Diff:
     """Structured description of all changes a fixer would make.
 
-    changes        — ordered list of per-frame changes; empty when the dataset
-                     is already clean and the fixer is a no-op.
+    changes        — ordered list of per-frame or per-stat changes; empty when
+                     the dataset is already clean and the fixer is a no-op.
     check_id       — the check this fixer targets (e.g. "KNOWNBUG.TIMESTAMP_DRIFT").
     fixer_id       — stable identifier for the fixer.
     is_noop        — True when changes is empty; the fixer has nothing to do.
     """
 
-    changes: tuple[FrameChange, ...]
+    changes: tuple[FrameChange | StatChange, ...]
     check_id: str
     fixer_id: str
 

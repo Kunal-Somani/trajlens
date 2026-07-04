@@ -230,6 +230,7 @@ def _rewrite_shards(diff: Diff, *, output_root: Path) -> int:
     """
     by_shard: dict[str, list[FrameChange]] = {}
     for change in diff.changes:
+        assert isinstance(change, FrameChange), f"unexpected change type: {type(change)}"
         by_shard.setdefault(change.shard_path, []).append(change)
 
     shards_written = 0
