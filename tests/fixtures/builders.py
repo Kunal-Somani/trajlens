@@ -330,6 +330,155 @@ def build_v3_metadata_data_disagreement(
     pq.write_table(new, ep_path)
 
 
+def build_v3_missing_episode_metadata(root: Path, *, camera: str = "top") -> None:
+    """Build a v3.0 dataset where data references an episode absent from metadata.
+
+    Deletes the last episode's row from meta/episodes/.../*.parquet while
+    leaving that episode's rows in the data shard untouched. Triggers
+    EpisodeReindexFixer's "data references an episode with no declared
+    metadata" failure mode: there is no EpisodeRecord for the fixer to
+    correct, so it cannot even express a repair for that episode's frames.
+    """
+    build_v3_dataset(root, num_episodes=3, camera=camera)
+    ep_path = root / "meta" / "episodes" / "chunk-000" / "file-000.parquet"
+    old = pq.read_table(ep_path)
+    keep_mask = [v != 2 for v in old.column("episode_index").to_pylist()]
+    new = old.filter(pa.array(keep_mask))
+    pq.write_table(new, ep_path)
+
+
+def build_v3_corrupt_episode_metadata(root: Path, *, camera: str = "top") -> None:
+    """Build a v3.0 dataset whose meta/episodes/.../*.parquet is not valid Parquet.
+
+    Triggers EpisodeReindexFixer's corrupt/unreadable episode-metadata
+    failure mode.
+    """
+    build_v3_dataset(root, camera=camera)
+    ep_path = root / "meta" / "episodes" / "chunk-000" / "file-000.parquet"
+    ep_path.write_bytes(b"NOT_VALID_PARQUET_JUST_GARBAGE_BYTES")
+
+
+def build_v3_metadata_from_index_wrong(
+    root: Path, *, camera: str = "top", num_episodes: int = 3
+) -> None:
+    """Build a v3.0 dataset where episode metadata's dataset_from_index is wrong.
+
+    Unlike build_v3_metadata_data_disagreement (which corrupts to_index), this
+    corrupts from_index by -1 for every episode after the first, so the
+    from_index field itself (not just to_index/length) needs correcting.
+    """
+    build_v3_dataset(root, num_episodes=num_episodes, camera=camera)
+    episodes_root = root / "meta" / "episodes" / "chunk-000"
+    ep_path = episodes_root / "file-000.parquet"
+    old = pq.read_table(ep_path)
+    from_col = old.column("dataset_from_index").to_pylist()
+    corrupted_from = [v - 1 if i > 0 else v for i, v in enumerate(from_col)]
+    new = old.set_column(
+        old.schema.get_field_index("dataset_from_index"),
+        "dataset_from_index",
+        pa.array(corrupted_from, type=pa.int64()),
+    )
+    pq.write_table(new, ep_path)
+
+
+def build_v3_metadata_length_wrong(
+    root: Path, *, camera: str = "top", num_episodes: int = 3
+) -> None:
+    """Build a v3.0 dataset where episode metadata's declared length is wrong.
+
+    Corrupts only the length column (+1 for episode 0), leaving from/to
+    indices alone, so the length field itself needs correcting.
+    """
+    build_v3_dataset(root, num_episodes=num_episodes, camera=camera)
+    episodes_root = root / "meta" / "episodes" / "chunk-000"
+    ep_path = episodes_root / "file-000.parquet"
+    old = pq.read_table(ep_path)
+    length_col = old.column("length").to_pylist()
+    corrupted_length = [v + 1 if i == 0 else v for i, v in enumerate(length_col)]
+    new = old.set_column(
+        old.schema.get_field_index("length"),
+        "length",
+        pa.array(corrupted_length, type=pa.int64()),
+    )
+    pq.write_table(new, ep_path)
+
+
+def build_v3_noncontiguous_index_column(
+    root: Path, *, camera: str = "top", num_episodes: int = 2
+) -> None:
+    """Build a v3.0 dataset where the data's global 'index' column has a gap.
+
+    Episode 0's rows keep contiguous frame_index/episode_index values but
+    their 'index' column skips a value, so no single dataset_from_index/
+    dataset_to_index range can describe episode 0's rows (the range would
+    have to include a row that does not belong to it). Triggers
+    EpisodeReindexFixer's non-contiguous-index refusal path.
+    """
+    build_v3_dataset(root, num_episodes=num_episodes, camera=camera)
+    data_path = root / "data" / "chunk-000" / "file-000.parquet"
+    old = pq.read_table(data_path)
+    idx_col = old.column("index").to_pylist()
+    # Introduce a gap after the first row: shift every subsequent index up by one.
+    gapped = [idx_col[0]] + [v + 1 for v in idx_col[1:]]
+    new = old.set_column(
+        old.schema.get_field_index("index"),
+        "index",
+        pa.array(gapped, type=pa.int64()),
+    )
+    pq.write_table(new, data_path)
+
+
+def build_v3_overlapping_index_ranges(
+    root: Path, *, camera: str = "top", num_episodes: int = 2
+) -> None:
+    """Build a v3.0 dataset where two episodes' data claim overlapping 'index' ranges.
+
+    Rewrites episode 1's 'index' column to overlap episode 0's range while
+    keeping each episode's own rows contiguous and non-interleaved. No single
+    boundary assignment can represent both episodes at once. Triggers
+    EpisodeReindexFixer's overlapping-ranges refusal path.
+    """
+    build_v3_dataset(root, num_episodes=num_episodes, camera=camera)
+    data_path = root / "data" / "chunk-000" / "file-000.parquet"
+    old = pq.read_table(data_path)
+    ep_col = old.column("episode_index").to_pylist()
+    idx_col = old.column("index").to_pylist()
+    # Shift every row belonging to episode 1 back so its range overlaps episode 0's.
+    overlapped = [(idx - 1) if ep == 1 else idx for ep, idx in zip(ep_col, idx_col, strict=True)]
+    new = old.set_column(
+        old.schema.get_field_index("index"),
+        "index",
+        pa.array(overlapped, type=pa.int64()),
+    )
+    pq.write_table(new, data_path)
+
+
+def build_v3_interleaved_episode_data(
+    root: Path, *, camera: str = "top", num_episodes: int = 2
+) -> None:
+    """Build a v3.0 dataset where data rows are unrepairably inconsistent.
+
+    Unlike build_v3_metadata_data_disagreement (where the METADATA is wrong
+    and the data is internally fine), this fixture corrupts the DATA itself:
+    episode_index values in the data shard are interleaved
+    (0, 1, 0, 1, 0, 1, ...) instead of grouped into contiguous per-episode
+    runs. No single dataset_from_index/dataset_to_index boundary assignment
+    can describe this data, so EpisodeReindexFixer must refuse with
+    RepairError rather than guess -- this is the fixture for that refusal path.
+    """
+    build_v3_dataset(root, num_episodes=num_episodes, camera=camera)
+    data_path = root / "data" / "chunk-000" / "file-000.parquet"
+    old = pq.read_table(data_path)
+    n_rows = old.num_rows
+    interleaved_ep = [i % num_episodes for i in range(n_rows)]
+    new = old.set_column(
+        old.schema.get_field_index("episode_index"),
+        "episode_index",
+        pa.array(interleaved_ep, type=pa.int64()),
+    )
+    pq.write_table(new, data_path)
+
+
 def build_v3_non_monotonic_timestamps(root: Path, *, camera: str = "top") -> None:
     """Build a v3.0 dataset where timestamps are not strictly increasing within episode 0."""
     build_v3_dataset(root, camera=camera)
