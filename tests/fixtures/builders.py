@@ -906,6 +906,34 @@ def build_v3_with_wrong_stats(root: Path, *, camera: str = "top") -> None:
     stats_path.write_text(json.dumps(stats))
 
 
+def build_v3_with_wrong_max(root: Path, *, camera: str = "top") -> None:
+    """Build a v3.0 dataset where stats.json has wrong max for 'timestamp'.
+
+    mean/std/min/count are correct; only max is corrupted (set to 9.9 vs the
+    true ~0.1).  Before the fix, dry_run() would return a noop Diff and apply()
+    would silently skip the rewrite.
+    """
+    build_v3_with_correct_stats(root, camera=camera)
+    stats_path = root / "meta" / "stats.json"
+    stats = json.loads(stats_path.read_text())
+    stats["timestamp"]["max"] = 9.9  # Correct is 3/30 ≈ 0.1; delta >> rtol.
+    stats_path.write_text(json.dumps(stats))
+
+
+def build_v3_with_wrong_count(root: Path, *, camera: str = "top") -> None:
+    """Build a v3.0 dataset where stats.json has wrong count for 'timestamp'.
+
+    mean/std/min/max are correct; only count is corrupted (off by one).
+    Exercises the exact-match path for count in dry_run().
+    """
+    build_v3_with_correct_stats(root, camera=camera)
+    stats_path = root / "meta" / "stats.json"
+    stats = json.loads(stats_path.read_text())
+    # True count is 3 episodes x 4 frames = 12; claim 11.
+    stats["timestamp"]["count"] = 11.0
+    stats_path.write_text(json.dumps(stats))
+
+
 def build_v3_with_per_episode_stats(
     root: Path, *, camera: str = "top", corrupt: bool = False
 ) -> None:

@@ -19,6 +19,8 @@ from tests.fixtures.builders import (
     build_v2_dataset,
     build_v3_dataset,
     build_v3_with_correct_stats,
+    build_v3_with_wrong_count,
+    build_v3_with_wrong_max,
     build_v3_with_wrong_stats,
 )
 from trajlens.checks import CheckEngine, registry
@@ -126,7 +128,7 @@ class TestRoundTrip:
 
         for change in diff.changes:
             assert isinstance(change, StatChange)
-            assert change.stat_key in ("mean", "std")
+            assert change.stat_key in ("mean", "std", "min", "max", "count")
             assert change.feature != ""
 
     def test_no_new_finding_introduced(self, tmp_path: Path) -> None:
@@ -338,3 +340,105 @@ class TestFailureModes:
 
         with pytest.raises(RepairError, match=r"v3\.0"):
             fixer.dry_run(ds)
+
+
+# ---------------------------------------------------------------------------
+# Corrupted max — false-pass regression guard
+# ---------------------------------------------------------------------------
+
+
+class TestCorruptedMax:
+    """Guard against the false-pass bug: correct mean/std but corrupted max.
+
+    Before the fix, dry_run() only diffed mean/std so a corrupt max produced a
+    noop Diff and apply() silently skipped the rewrite.
+    """
+
+    def test_dry_run_detects_corrupted_max(self, tmp_path: Path) -> None:
+        """dry_run() must report a non-noop Diff when only max is corrupted."""
+        source = tmp_path / "source"
+        build_v3_with_wrong_max(source)
+
+        fixer = StatsRecomputeFixer()
+        ds = _load(source)
+        diff = fixer.dry_run(ds)
+
+        assert not diff.is_noop, "corrupted max must produce a non-empty diff"
+        max_changes = [c for c in diff.changes if isinstance(c, StatChange) and c.stat_key == "max"]
+        assert len(max_changes) >= 1, "diff must contain at least one StatChange for 'max'"
+        assert max_changes[0].feature == "timestamp"
+        assert max_changes[0].old_value == pytest.approx(9.9)
+
+    def test_apply_corrects_corrupted_max(self, tmp_path: Path) -> None:
+        """apply() must rewrite stats.json and clear the max corruption."""
+        source = tmp_path / "source"
+        output = tmp_path / "repaired"
+        build_v3_with_wrong_max(source)
+
+        fixer = StatsRecomputeFixer()
+        ds = _load(source)
+        summary = fixer.apply(ds, output)
+
+        assert summary.changes_written == 1
+        assert summary.frames_corrected > 0
+
+        written = json.loads((output / "meta" / "stats.json").read_text())
+        # Correct max is 3/30 ≈ 0.1; the corrupt value was 9.9.
+        assert written["timestamp"]["max"] == pytest.approx(3 / 30.0, rel=1e-4)
+
+    def test_repaired_max_matches_recomputed(self, tmp_path: Path) -> None:
+        """After repair, max in stats.json equals the Welford-recomputed value."""
+        source = tmp_path / "source"
+        output = tmp_path / "repaired"
+        build_v3_with_wrong_max(source)
+
+        ds = _load(source)
+        expected = _recompute_stats(ds)
+
+        fixer = StatsRecomputeFixer()
+        fixer.apply(ds, output)
+
+        written = json.loads((output / "meta" / "stats.json").read_text())
+        assert written["timestamp"]["max"] == pytest.approx(expected["timestamp"]["max"], rel=1e-9)
+
+
+# ---------------------------------------------------------------------------
+# Corrupted count — exact-match path guard
+# ---------------------------------------------------------------------------
+
+
+class TestCorruptedCount:
+    """Guard the exact-match comparison path used for count in dry_run()."""
+
+    def test_dry_run_detects_corrupted_count(self, tmp_path: Path) -> None:
+        """dry_run() must report a non-noop Diff when only count is wrong."""
+        source = tmp_path / "source"
+        build_v3_with_wrong_count(source)
+
+        fixer = StatsRecomputeFixer()
+        ds = _load(source)
+        diff = fixer.dry_run(ds)
+
+        assert not diff.is_noop, "corrupted count must produce a non-empty diff"
+        count_changes = [
+            c for c in diff.changes if isinstance(c, StatChange) and c.stat_key == "count"
+        ]
+        assert len(count_changes) >= 1, "diff must contain at least one StatChange for 'count'"
+        assert count_changes[0].old_value == pytest.approx(11.0)
+        assert count_changes[0].new_value == pytest.approx(12.0)
+
+    def test_apply_corrects_corrupted_count(self, tmp_path: Path) -> None:
+        """apply() must rewrite stats.json with the correct frame count."""
+        source = tmp_path / "source"
+        output = tmp_path / "repaired"
+        build_v3_with_wrong_count(source)
+
+        fixer = StatsRecomputeFixer()
+        ds = _load(source)
+        summary = fixer.apply(ds, output)
+
+        assert summary.changes_written == 1
+
+        written = json.loads((output / "meta" / "stats.json").read_text())
+        # 3 episodes x 4 frames = 12.
+        assert written["timestamp"]["count"] == pytest.approx(12.0)

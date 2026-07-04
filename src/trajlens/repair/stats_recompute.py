@@ -126,7 +126,7 @@ class StatsRecomputeFixer:
             if feat_stored is None or not isinstance(feat_stored, dict):
                 continue
 
-            for stat_key in ("mean", "std"):
+            for stat_key in ("mean", "std", "min", "max", "count"):
                 stored_val_raw = feat_stored.get(stat_key)
                 if stored_val_raw is None:
                     continue
@@ -135,7 +135,13 @@ class StatsRecomputeFixer:
                 except (TypeError, ValueError):
                     continue
                 new_val = new_stats[stat_key]
-                if _relative_error(stored_val, new_val) > _CHECK_RTOL:
+                # count is always an exact integer — any discrepancy is a bug,
+                # and relative tolerance would mis-fire on tiny counts.
+                if stat_key == "count":
+                    deviated = stored_val != new_val
+                else:
+                    deviated = _relative_error(stored_val, new_val) > _CHECK_RTOL
+                if deviated:
                     changes.append(
                         StatChange(
                             feature=feat_name,
