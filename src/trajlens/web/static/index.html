@@ -1,0 +1,209 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>trajlens dashboard</title>
+<style>
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, monospace;
+    background: #0f1117;
+    color: #e2e8f0;
+    margin: 0;
+    padding: 2rem;
+    line-height: 1.6;
+  }
+  h1 { color: #f8fafc; font-size: 1.4rem; margin-bottom: 0.25rem; }
+  h2 { color: #f8fafc; font-size: 1.1rem; margin-top: 2rem; }
+  .meta { color: #94a3b8; font-size: 0.9rem; margin-bottom: 2rem; }
+  table { border-collapse: collapse; width: 100%; margin-bottom: 1rem; }
+  th { text-align: left; color: #94a3b8; font-weight: 600;
+       border-bottom: 1px solid #334155; padding: 0.5rem 1rem; }
+  td { padding: 0.5rem 1rem; border-bottom: 1px solid #1e293b; vertical-align: top; }
+  tr.result-row { cursor: pointer; }
+  tr.result-row:hover td { background: #161c2c; }
+  .sev-ERROR { color: #f87171; font-weight: bold; }
+  .sev-FAIL  { color: #f87171; }
+  .sev-WARN  { color: #fbbf24; }
+  .sev-INFO  { color: #34d399; }
+  .summary { background: #1e293b; border-radius: 0.5rem; padding: 1.5rem;
+             display: flex; gap: 2rem; align-items: center; }
+  .score { font-size: 2.5rem; font-weight: bold; }
+  .score-label { color: #94a3b8; font-size: 0.8rem; }
+  .grade { font-size: 1.2rem; }
+  .grade-PASS  { color: #34d399; }
+  .grade-WARN  { color: #fbbf24; }
+  .grade-FAIL  { color: #f87171; }
+  .grade-ERROR { color: #f87171; font-weight: bold; }
+  .gauge-track { width: 220px; height: 10px; border-radius: 999px; background: #334155;
+                 overflow: hidden; margin-top: 0.5rem; }
+  .gauge-fill { height: 100%; border-radius: 999px; }
+  .details {
+    display: none;
+    background: #161c2c;
+    border: 1px solid #1e293b;
+    border-radius: 0.375rem;
+    padding: 0.75rem 1rem;
+    margin: 0 0 1rem 0;
+    font-size: 0.85rem;
+    color: #cbd5e1;
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
+  .details.open { display: block; }
+  #error { color: #f87171; }
+  #loading { color: #94a3b8; }
+</style>
+</head>
+<body>
+<h1 id="title">trajlens dashboard</h1>
+<p class="meta" id="meta"></p>
+<p id="loading">Loading report&hellip;</p>
+<p id="error" style="display:none"></p>
+
+<div id="report" style="display:none">
+  <div class="summary">
+    <div>
+      <div class="score" id="score">&mdash;</div>
+      <div class="score-label" id="score-label">Trust score</div>
+      <div class="gauge-track"><div class="gauge-fill" id="gauge-fill"></div></div>
+    </div>
+    <div>
+      <div class="grade" id="grade">&mdash;</div>
+    </div>
+  </div>
+
+  <h2>Severity summary</h2>
+  <table>
+    <tr><th>Severity</th><th>Count</th></tr>
+    <tbody id="counts-body"></tbody>
+  </table>
+
+  <h2>Check results</h2>
+  <table>
+    <tr><th>Severity</th><th>Check ID</th><th>Message</th></tr>
+    <tbody id="results-body"></tbody>
+  </table>
+</div>
+
+<script>
+"use strict";
+
+var SEVERITY_ORDER = ["FAIL", "WARN", "ERROR", "INFO"];
+var GRADE_COLOR = { PASS: "#34d399", WARN: "#fbbf24", FAIL: "#f87171", ERROR: "#f87171" };
+
+function gradeLabel(grade) {
+  if (grade === "FAIL") return "FAIL — unsafe to train on";
+  if (grade === "WARN") return "WARN — usable with caution";
+  return grade;
+}
+
+function renderDetails(details) {
+  if (!details || Object.keys(details).length === 0) return "";
+  try {
+    return JSON.stringify(details, null, 2);
+  } catch (e) {
+    return String(details);
+  }
+}
+
+function render(data) {
+  document.getElementById("loading").style.display = "none";
+  document.getElementById("report").style.display = "block";
+
+  document.getElementById("title").textContent = "trajlens dashboard: " + data.ref;
+  document.getElementById("meta").textContent =
+    "Version: " + data.version +
+    "  |  Episodes: " + data.num_episodes +
+    "  |  Frames: " + (data.num_frames === null ? "unknown" : data.num_frames);
+
+  var score = data.trust_score === null ? 0 : data.trust_score;
+  document.getElementById("score").textContent = data.trust_score === null ? "—" : score + "/100";
+  document.getElementById("score-label").textContent =
+    "Trust score (formula v" + data.score_formula_version + ")";
+  var fill = document.getElementById("gauge-fill");
+  fill.style.width = score + "%";
+  fill.style.background = GRADE_COLOR[data.grade] || "#334155";
+
+  var gradeEl = document.getElementById("grade");
+  gradeEl.textContent = gradeLabel(data.grade);
+  gradeEl.className = "grade grade-" + data.grade;
+
+  var counts = { FAIL: 0, WARN: 0, ERROR: 0, INFO: 0 };
+  data.results.forEach(function (r) {
+    if (counts[r.severity] !== undefined) counts[r.severity]++;
+  });
+  var countsBody = document.getElementById("counts-body");
+  countsBody.innerHTML = "";
+  SEVERITY_ORDER.forEach(function (sev) {
+    var tr = document.createElement("tr");
+    var tdSev = document.createElement("td");
+    tdSev.className = "sev-" + sev;
+    tdSev.textContent = sev;
+    var tdCount = document.createElement("td");
+    tdCount.textContent = String(counts[sev]);
+    tr.appendChild(tdSev);
+    tr.appendChild(tdCount);
+    countsBody.appendChild(tr);
+  });
+
+  var resultsBody = document.getElementById("results-body");
+  resultsBody.innerHTML = "";
+  data.results.forEach(function (r, idx) {
+    var row = document.createElement("tr");
+    row.className = "result-row";
+
+    var tdSev = document.createElement("td");
+    tdSev.className = "sev-" + r.severity;
+    tdSev.textContent = r.severity;
+
+    var tdId = document.createElement("td");
+    tdId.textContent = r.check_id;
+
+    var tdMsg = document.createElement("td");
+    tdMsg.textContent = r.message;
+
+    row.appendChild(tdSev);
+    row.appendChild(tdId);
+    row.appendChild(tdMsg);
+    resultsBody.appendChild(row);
+
+    var detailsText = renderDetails(r.details);
+    if (detailsText) {
+      var detailRow = document.createElement("tr");
+      var detailCell = document.createElement("td");
+      detailCell.colSpan = 3;
+      var detailBox = document.createElement("div");
+      detailBox.className = "details";
+      detailBox.id = "details-" + idx;
+      detailBox.textContent = detailsText;
+      detailCell.appendChild(detailBox);
+      detailRow.appendChild(detailCell);
+      resultsBody.appendChild(detailRow);
+
+      row.addEventListener("click", function () {
+        detailBox.classList.toggle("open");
+      });
+    }
+  });
+}
+
+function renderError(message) {
+  document.getElementById("loading").style.display = "none";
+  var errEl = document.getElementById("error");
+  errEl.style.display = "block";
+  errEl.textContent = "Failed to load report: " + message;
+}
+
+fetch("/api/report")
+  .then(function (resp) {
+    if (!resp.ok) throw new Error("HTTP " + resp.status);
+    return resp.json();
+  })
+  .then(render)
+  .catch(function (err) {
+    renderError(err.message);
+  });
+</script>
+</body>
+</html>
