@@ -8,22 +8,27 @@ ruff for robot data — lint, fix, and generate clean LeRobotDataset datasets.
 
 ## Status
 
-Pre-v0.1 (`0.1.0.dev0`), under active development. Not yet on PyPI.
+v0.2.0, under active development.
 
-`lint` is implemented and audited against the public Hub (see [Real-world audit](#real-world-audit-of-the-hub) below).
-`fix` and `web` are stubs reserved for the v0.2 milestone.
+`lint` is implemented and audited against the public Hub (see [Real-world audit](#real-world-audit-of-the-hub) below). `fix` (repair engine: timestamp drift, stats recomputation, episode reindexing) and `web` (read-only local dashboard) both ship as of v0.2.
 
-## Install (dev)
+## Install
+
+```bash
+pip install trajlens
+```
+
+For dev work:
 
 ```bash
 git clone https://github.com/<your-username>/trajlens
 cd trajlens
 uv venv
 source .venv/bin/activate
-uv pip install -e ".[dev,hub]"
+uv pip install -e ".[dev,hub,web]"
 ```
 
-The `[hub]` extra pulls in `huggingface_hub`; it's only required to lint datasets by Hub repo id rather than local path.
+The `[hub]` extra pulls in `huggingface_hub`; it's only required to lint datasets by Hub repo id rather than local path. The `[web]` extra pulls in FastAPI + uvicorn; it's only required for `trajlens web`.
 
 ## Usage
 
@@ -39,13 +44,33 @@ Exit codes follow lint-tool convention: `0` = clean, `1` = WARN present, `2` = F
 
 By default, checks that require materializing a lot of data over the network (full video decode, per-frame stats reconciliation) are skipped for Hub datasets and reported as INFO/skipped rather than run. Pass `--deep` to force them; expect this to be significantly slower and to fetch the full dataset.
 
+### Repairing issues: `trajlens fix`
+
+```bash
+trajlens fix <local-path>                       # dry-run: preview the diff, write nothing
+trajlens fix <local-path> --apply --out <path>  # write a repaired copy
+trajlens fix <local-path> --json                # machine-readable dry-run/apply report
+```
+
+`fix` lints the dataset, selects whichever of the three fixers apply to the findings (`REPAIR.TIMESTAMP_DEDRIFT`, `REPAIR.STATS_RECOMPUTE`, `REPAIR.EPISODE_REINDEX`), and runs them in a fixed order. It's copy-on-write — the source is never mutated — and dry-run by default. Only local datasets can be repaired: a Hub ref's data/video shards are streamed on demand and never fully present on disk to copy, so `fix` refuses Hub refs with a clean error rather than silently producing an incomplete repair.
+
+Exit codes: `0` = nothing to fix, `1` = fixes proposed or applied, `2` = could not fix (load failure, invalid usage, or a fixer's refusal because the underlying data has no consistent repair).
+
+### Viewing a report: `trajlens web`
+
+```bash
+trajlens web <path-or-org/dataset>
+```
+
+Lints the dataset once and serves a read-only local dashboard over the result (binds to `127.0.0.1` only, no flag to widen the bind). It's a thin FastAPI shell over the same report the terminal/JSON renderers use — no separate lint logic, no writes, no route that accepts a path/ref/dataset id from the browser.
+
 ## Architecture
 
 ```mermaid
 graph TD
   subgraph Interfaces
     CLI[CLI - typer]
-    WEB[Web dashboard - FastAPI + React, optional]
+    WEB[Web dashboard - FastAPI + static HTML/JS, optional]
     SDK[Python SDK / import]
   end
 
