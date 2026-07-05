@@ -236,14 +236,42 @@ def fix(
 def web(
     ref: Annotated[
         str,
-        typer.Argument(help="Local path or Hub repo id to visualise."),
+        typer.Argument(help="Local path or Hugging Face Hub repo id (org/name)."),
     ],
     port: Annotated[
         int,
         typer.Option("--port", help="Port to serve the dashboard on."),
     ] = 8000,
+    no_open: Annotated[
+        bool,
+        typer.Option("--no-open", help="Do not open a browser automatically."),
+    ] = False,
 ) -> None:
-    """Open the web dashboard for a dataset lint report."""
-    raise NotImplementedError(  # pragma: no cover — stub until v0.2
-        "trajlens web is not yet implemented (v0.2 milestone)."
-    )
+    """Lint a dataset once and serve a read-only dashboard of the report.
+
+    Read-only over the library: this never invokes fix, never writes
+    anything. Binds to 127.0.0.1 only. A Hub ref is allowed (lint already
+    streams Hub data read-only); the dataset is resolved once at launch and
+    the server never accepts a path, ref, or dataset id from the browser.
+
+    Exit codes:
+      0 = server ran and was stopped normally (Ctrl-C)
+      2 = dataset could not be resolved or loaded, or the [web] extra is
+          not installed
+    """
+    from trajlens.errors import DatasetError
+
+    try:
+        from trajlens.web.server import dashboard_url, serve
+    except ModuleNotFoundError as exc:
+        message = "trajlens web requires the [web] extra: pip install 'trajlens[web]'"
+        typer.echo(f"ERROR: {message}", err=True)
+        raise typer.Exit(code=2) from exc
+
+    try:
+        url = dashboard_url(port)
+        typer.echo(f"trajlens dashboard: {url}")
+        serve(ref, port=port, open_browser=not no_open)
+    except DatasetError as exc:
+        typer.echo(f"ERROR: Could not load dataset {ref!r}: {exc}", err=True)
+        raise typer.Exit(code=2) from exc

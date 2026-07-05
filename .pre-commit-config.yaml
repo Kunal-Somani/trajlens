@@ -22,3 +22,5 @@ repos:
           - typer>=0.12
           - pyarrow>=19.0,<25
           - numpy>=1.26,<3
+          - fastapi>=0.110,<1
+          - uvicorn>=0.29,<1

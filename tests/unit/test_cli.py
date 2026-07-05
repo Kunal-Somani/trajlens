@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
 from typer.testing import CliRunner
 
 import trajlens
@@ -272,11 +273,66 @@ class TestLintSarifReport:
         assert "error" in levels
 
 
-class TestUnimplementedCommands:
-    def test_web_raises_not_implemented(self) -> None:
-        result = runner.invoke(app, ["web", "some/dataset"])
-        assert result.exit_code != 0
-        assert isinstance(result.exception, NotImplementedError)
+class TestWebCommand:
+    def test_web_errors_cleanly_when_extra_not_installed(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """If fastapi/uvicorn (the [web] extra) aren't installed, `web` must
+        fail with a typed, actionable error, not a raw ImportError traceback.
+        """
+        build_v3_dataset(tmp_path)
+        real_import = __import__
+
+        def fake_import(
+            name: str,
+            globals: object = None,
+            locals: object = None,
+            fromlist: object = (),
+            level: int = 0,
+        ) -> object:
+            if name == "trajlens.web.server":
+                raise ModuleNotFoundError("No module named 'fastapi'")
+            return real_import(name, globals, locals, fromlist, level)
+
+        monkeypatch.setattr("builtins.__import__", fake_import)
+
+        result = runner.invoke(app, ["web", str(tmp_path)])
+
+        assert result.exit_code == 2
+        assert "[web]" in result.output
+
+    def test_web_errors_cleanly_on_missing_path(self) -> None:
+        result = runner.invoke(app, ["web", "/nonexistent/path/to/dataset"])
+        assert result.exit_code == 2
+        assert result.exception is None or isinstance(result.exception, SystemExit)
+        assert "ERROR" in result.output
+
+    def test_web_serves_and_respects_no_open(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        build_v3_dataset(tmp_path)
+        opened: list[str] = []
+        monkeypatch.setattr("webbrowser.open", lambda url: opened.append(url))
+        monkeypatch.setattr("uvicorn.run", lambda *a, **k: None)
+
+        result = runner.invoke(app, ["web", str(tmp_path), "--no-open", "--port", "8123"])
+
+        assert result.exit_code == 0
+        assert opened == []
+        assert "8123" in result.output
+
+    def test_web_opens_browser_without_no_open(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        build_v3_dataset(tmp_path)
+        opened: list[str] = []
+        monkeypatch.setattr("webbrowser.open", lambda url: opened.append(url))
+        monkeypatch.setattr("uvicorn.run", lambda *a, **k: None)
+
+        result = runner.invoke(app, ["web", str(tmp_path), "--port", "8124"])
+
+        assert result.exit_code == 0
+        assert opened == ["http://127.0.0.1:8124/"]
 
 
 class TestFixDryRunDefault:

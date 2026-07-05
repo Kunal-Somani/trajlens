@@ -14,7 +14,8 @@ Schema:
         "check_id": str,
         "severity": str,
         "category": str,
-        "message": str
+        "message": str,
+        "details": dict  # check-specific structured detail, shape varies by check_id
       },
       ...
     ]
@@ -70,6 +71,7 @@ def render_json(
                 "severity": r.severity.value,
                 "category": r.check_id.split(".")[0],
                 "message": r.message,
+                "details": r.details,
             }
             for r in results
         ],

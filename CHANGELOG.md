@@ -9,6 +9,18 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ## [Unreleased]
 
+### Added
+- `trajlens web <ref>`: read-only local dashboard over the lint report
+  (optional `[web]` extra: FastAPI + uvicorn). Binds to 127.0.0.1 only, no
+  flag to widen the bind; serves exactly two routes (static dashboard,
+  `GET /api/report`); strict CSP/security headers on every response; no
+  route accepts a path, ref, or dataset id from the browser
+  (`06_SECURITY_AND_THREAT_MODEL.md` T10)
+- `report/json_report.py`: `results[].details` now included in `--json`
+  output (previously computed but dropped), giving the dashboard's
+  drill-down access to the same structured detail the checks already
+  produce
+
 ## [0.1.0] - 2026-06-24
 
 ### Added
