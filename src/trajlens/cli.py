@@ -129,7 +129,7 @@ def lint(
 def fix(
     ref: Annotated[
         str,
-        typer.Argument(help="Local path to the dataset to repair."),
+        typer.Argument(help="Local path or Hugging Face Hub repo id (org/name)."),
     ],
     dry_run: Annotated[
         bool,
@@ -137,13 +137,99 @@ def fix(
     ] = True,
     out: Annotated[
         str | None,
-        typer.Option("--out", help="Output path for the repaired dataset copy."),
+        typer.Option(
+            "--out", help="Output path for the repaired dataset copy. Required with --apply."
+        ),
     ] = None,
+    json_output: Annotated[
+        bool,
+        typer.Option("--json", help="Emit machine-readable JSON report to stdout."),
+    ] = False,
 ) -> None:
-    """Repair issues found by lint (copy-on-write; dry-run by default)."""
-    raise NotImplementedError(  # pragma: no cover — stub until v0.2
-        "trajlens fix is not yet implemented (v0.2 milestone)."
-    )
+    """Repair issues found by lint (copy-on-write; dry-run by default).
+
+    Runs lint first, determines which fixers apply to the findings, then
+    either previews (dry-run, default) or applies (--apply) each applicable
+    fixer's repair. Only local datasets can be repaired: a Hub ref's data and
+    video shards are streamed on demand, never fully present on disk to copy.
+
+    Exit codes:
+      0 = nothing to fix (dataset already agrees with data for every
+          applicable check)
+      1 = fixes proposed (dry-run) or applied (--apply) successfully
+      2 = could not fix: dataset failed to load, invalid usage (--apply
+          without --out, or --out same as the source), or a fixer refused to
+          repair (RepairError) because the underlying data is itself
+          internally inconsistent
+    """
+    import sys
+    from pathlib import Path
+
+    from trajlens.checks import CheckContext, CheckEngine, registry
+    from trajlens.errors import DatasetError, RepairError
+    from trajlens.model import build_canonical_dataset
+    from trajlens.repair.orchestrator import refuse_if_hub_ref, run_apply, run_dry_run
+    from trajlens.report import render_fix_json, render_fix_json_error, render_fix_terminal
+    from trajlens.sources.loader import SourceLoader
+
+    if not dry_run and out is None:
+        message = "--apply requires --out <path> (never writes to an implicit location)."
+        if json_output:
+            typer.echo(render_fix_json_error(ref, "UsageError", message))
+        else:
+            typer.echo(f"ERROR: {message}", err=True)
+        raise typer.Exit(code=2)
+
+    if out is not None:
+        source_candidate = Path(ref)
+        if source_candidate.exists() and source_candidate.resolve() == Path(out).resolve():
+            message = "--out must not be the same path as the source dataset (copy-on-write)."
+            if json_output:
+                typer.echo(render_fix_json_error(ref, "UsageError", message))
+            else:
+                typer.echo(f"ERROR: {message}", err=True)
+            raise typer.Exit(code=2)
+
+    try:
+        handle = SourceLoader().resolve(ref)
+        refuse_if_hub_ref(handle, ref)
+        ds = build_canonical_dataset(handle)
+    except DatasetError as exc:
+        if json_output:
+            typer.echo(render_fix_json_error(ref, type(exc).__name__, str(exc)))
+        else:
+            typer.echo(f"ERROR: Could not load dataset {ref!r}: {exc}", err=True)
+        raise typer.Exit(code=2) from exc
+    except RepairError as exc:
+        if json_output:
+            typer.echo(render_fix_json_error(ref, type(exc).__name__, str(exc)))
+        else:
+            typer.echo(f"ERROR: {exc}", err=True)
+        raise typer.Exit(code=2) from exc
+
+    ctx = CheckContext(deep=False)
+    engine = CheckEngine(registry)
+    results = engine.run(ds, ctx)
+
+    try:
+        if dry_run:
+            plan = run_dry_run(ds, results)
+        else:
+            assert out is not None  # guarded above
+            plan = run_apply(ds, results, Path(out))
+    except RepairError as exc:
+        if json_output:
+            typer.echo(render_fix_json_error(ref, type(exc).__name__, str(exc)))
+        else:
+            typer.echo(f"ERROR: Could not repair {ref!r}: {exc}", err=True)
+        raise typer.Exit(code=2) from exc
+
+    if json_output:
+        typer.echo(render_fix_json(ref, plan))
+    else:
+        render_fix_terminal(ref, plan)
+
+    sys.exit(1 if plan.applicable else 0)
 
 
 @app.command()

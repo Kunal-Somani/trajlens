@@ -1073,6 +1073,88 @@ def build_v3_with_wrong_stats(root: Path, *, camera: str = "top") -> None:
     stats_path.write_text(json.dumps(stats))
 
 
+def build_v3_drift_and_wrong_stats(
+    root: Path, *, camera: str = "top", num_episodes: int = 3, drift_per_frame: float = 5e-5
+) -> None:
+    """Build a v3.0 dataset with BOTH timestamp drift and a wrong stats.json.
+
+    Composes build_v3_timestamp_drift (KNOWNBUG.TIMESTAMP_DRIFT FAIL) with a
+    stats.json whose stored mean is wrong by a large, deliberate margin (0.9
+    vs a true post-repair mean of ~0.05 -- the same corruption pattern as
+    build_v3_with_wrong_stats), so STATISTICAL.STATS_MATCH_DATA also FAILs
+    both before AND after timestamp_dedrift repairs the drift (the tiny
+    per-frame drift alone would not move the mean anywhere near 0.9). This
+    makes the fixture prove fixer composition order unambiguously: if
+    REPAIR.STATS_RECOMPUTE ran before REPAIR.TIMESTAMP_DEDRIFT, or against
+    unfixed data, stats.json would still fail to match post-repair -- the
+    only way both findings clear together is if stats_recompute runs AFTER
+    dedrift, against the corrected timestamp column.
+    """
+    build_v3_timestamp_drift(
+        root, num_episodes=num_episodes, camera=camera, drift_per_frame=drift_per_frame
+    )
+    _write_stats_json(
+        root,
+        {
+            "timestamp": {
+                "mean": 0.9,  # Correct post-repair mean is ~0.05; delta >> rtol.
+                "std": 0.05,
+                "min": 0.0,
+                "max": 0.2,
+                "count": float(num_episodes * FRAMES_PER_EPISODE),
+            }
+        },
+    )
+
+
+def build_v3_drift_fixed_by_dedrift_incidentally_clears_stats(
+    root: Path, *, camera: str = "top", num_episodes: int = 3
+) -> None:
+    """Build a dataset where STATISTICAL.STATS_MATCH_DATA fires, but is already
+    within tolerance by the time REPAIR.STATS_RECOMPUTE's dry_run() runs against
+    the timestamp_dedrift-corrected data.
+
+    Unlike build_v3_drift_and_wrong_stats (deliberately wrong stats that stay
+    wrong even after dedrift), this fixture's stats.json is snapshotted
+    against the CLEAN pre-drift data, and the drift is tiny enough that the
+    stats.json is still within STATISTICAL.STATS_MATCH_DATA's rtol once
+    timestamp_dedrift has run -- exercising `trajlens fix`'s "fixer was
+    selected because its check fired, but its own dry_run() against the
+    already-repaired chain is a noop" branch (repair/orchestrator.py
+    run_apply's mid-chain noop skip).
+    """
+    build_v3_timestamp_drift(root, num_episodes=num_episodes, camera=camera, drift_per_frame=0.0)
+    all_ts = [float(f / 30.0) for _ep in range(num_episodes) for f in range(FRAMES_PER_EPISODE)]
+    n = len(all_ts)
+    mean = sum(all_ts) / n
+    variance = sum((x - mean) ** 2 for x in all_ts) / n
+    std = variance**0.5
+    _write_stats_json(
+        root,
+        {
+            "timestamp": {
+                "mean": mean,
+                "std": std,
+                "min": min(all_ts),
+                "max": max(all_ts),
+                "count": n,
+            }
+        },
+    )
+    data_path = root / "data" / "chunk-000" / "file-000.parquet"
+    old = pq.read_table(data_path)
+    ts = old.column("timestamp").to_pylist()
+    # Drift just past the KNOWNBUG.TIMESTAMP_DRIFT tolerance (1e-4s) so the
+    # check fires, but small enough that recomputed stats stay within
+    # STATISTICAL.STATS_MATCH_DATA's rtol relative to the snapshot above.
+    drift_per_frame = 5e-5
+    new_ts = [float(t) + (i * drift_per_frame) for i, t in enumerate(ts)]
+    new = old.set_column(
+        old.schema.get_field_index("timestamp"), "timestamp", pa.array(new_ts, type=pa.float32())
+    )
+    pq.write_table(new, data_path)
+
+
 def build_v3_with_wrong_max(root: Path, *, camera: str = "top") -> None:
     """Build a v3.0 dataset where stats.json has wrong max for 'timestamp'.
 
