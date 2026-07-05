@@ -53,17 +53,36 @@ class StatChange:
 
 
 @dataclass(frozen=True, slots=True)
+class BoundaryChange:
+    """A single episode-boundary change produced by a fixer's dry run.
+
+    episode_index  — which episode's declared metadata would be rewritten.
+    field          — the metadata field being corrected (e.g. "dataset_from_index",
+                     "dataset_to_index", "length").
+    old_value      — the value currently stored in episode metadata.
+    new_value      — the corrected value the fixer would write, derived from
+                     the actual data (never the reverse).
+    """
+
+    episode_index: int
+    field: str
+    old_value: int
+    new_value: int
+
+
+@dataclass(frozen=True, slots=True)
 class Diff:
     """Structured description of all changes a fixer would make.
 
-    changes        — ordered list of per-frame or per-stat changes; empty when
-                     the dataset is already clean and the fixer is a no-op.
+    changes        — ordered list of per-frame, per-stat, or per-boundary
+                     changes; empty when the dataset is already clean and the
+                     fixer is a no-op.
     check_id       — the check this fixer targets (e.g. "KNOWNBUG.TIMESTAMP_DRIFT").
     fixer_id       — stable identifier for the fixer.
     is_noop        — True when changes is empty; the fixer has nothing to do.
     """
 
-    changes: tuple[FrameChange | StatChange, ...]
+    changes: tuple[FrameChange | StatChange | BoundaryChange, ...]
     check_id: str
     fixer_id: str
 
