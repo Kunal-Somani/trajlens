@@ -1,9 +1,19 @@
 """Tests for the FastAPI dashboard app (src/trajlens/web/app.py).
 
-Covers the T10 contract: exactly two routes, strict security headers on
-every response, no route accepts a path/ref/dataset-id parameter, and the
-served /api/report JSON matches what render_json produces (the JSON report
-IS the API contract — 02_ARCHITECTURE.md §3.4).
+Covers the T10 contract: the dashboard's route surface, strict security
+headers on every response, no route accepts a path/ref/dataset-id parameter,
+and the served /api/report JSON matches what render_json produces (the JSON
+report IS the API contract — 02_ARCHITECTURE.md §3.4).
+
+Also covers the CSP-inline release-blocker found in manual browser testing:
+a real browser (unlike TestClient) enforces script-src/style-src 'self',
+which silently no-ops any inline <script>/<style> or style="" attribute
+under this dashboard's CSP -- the 437 tests passing before this fix only
+checked that CSP headers exist, never that a browser would actually accept
+the inline content those headers forbid. index.html now loads
+static/style.css and static/app.js as external files; TestIndexRoute and
+TestDashboardNoInlineContent are the structural substitute for a real
+browser, since automated tests here cannot enforce CSP themselves.
 """
 
 from __future__ import annotations
@@ -82,6 +92,78 @@ class TestIndexRoute:
         assert "http://" not in body.replace("http://127.0.0.1", "")
         assert "https://" not in body
 
+    def test_style_css_served_and_self_contained(self) -> None:
+        client = _client()
+        resp = client.get("/static/style.css")
+        assert resp.status_code == 200
+        assert "text/css" in resp.headers["content-type"]
+        assert "http://" not in resp.text
+        assert "https://" not in resp.text
+
+    def test_app_js_served_and_self_contained(self) -> None:
+        client = _client()
+        resp = client.get("/static/app.js")
+        assert resp.status_code == 200
+        assert "javascript" in resp.headers["content-type"]
+        assert "http://" not in resp.text
+        assert "https://" not in resp.text
+
+
+class TestDashboardNoInlineContent:
+    """Structural substitute for a real browser's CSP enforcement.
+
+    The dashboard's CSP is script-src 'self'; style-src 'self' with no
+    unsafe-inline. TestClient never enforces CSP -- it just checks the
+    header string is present and well-formed -- so a real browser is the
+    only thing that actually rejects inline content under this policy. This
+    class makes "an inline <script>/<style> or style='' attribute crept back
+    into index.html" a class of bug automated tests CAN catch, without
+    needing a browser in CI: it asserts the served HTML contains none of the
+    three forms a real browser would silently block (release-blocking bug
+    found in manual browser testing: the dashboard was stuck at "Loading
+    report..." with no styling because every inline block/attribute was
+    dropped by CSP enforcement, and nothing in the test suite caught it).
+
+    A <script src="..."> or <link rel="stylesheet" href="..."> reference is
+    fine (that's the fix); a <script> or <style> tag WITH body content, or
+    any style="..." attribute, is the regression this guards against.
+    """
+
+    def test_served_html_has_no_inline_script_or_style_elements(self) -> None:
+        client = _client()
+        body = client.get("/").text
+
+        inline_script = re.search(r"<script(?![^>]*\bsrc=)[^>]*>\s*\S", body)
+        assert inline_script is None, (
+            f"index.html has an inline <script> body, which script-src 'self' "
+            f"silently blocks in a real browser: {inline_script.group(0)!r}"
+        )
+
+        inline_style = re.search(r"<style[^>]*>\s*\S", body)
+        assert inline_style is None, (
+            f"index.html has an inline <style> body, which style-src 'self' "
+            f"silently blocks in a real browser: {inline_style.group(0)!r}"
+        )
+
+    def test_served_html_has_no_style_attribute(self) -> None:
+        client = _client()
+        body = client.get("/").text
+
+        style_attr = re.search(r'\sstyle\s*=\s*["\']', body)
+        assert style_attr is None, (
+            f'index.html has an inline style="" attribute, which '
+            f"style-src-attr (part of style-src 'self') silently blocks in a "
+            f"real browser: {style_attr.group(0)!r}. Use a CSS class toggled "
+            f"via classList instead."
+        )
+
+    def test_served_html_references_external_stylesheet_and_script(self) -> None:
+        """The fix itself: index.html must actually load the external files."""
+        client = _client()
+        body = client.get("/").text
+        assert re.search(r'<link[^>]+rel=["\']stylesheet["\'][^>]+href=', body)
+        assert re.search(r"<script[^>]+src=", body)
+
 
 class TestDashboardXssInert:
     """Guard against HTML-injection via untrusted dataset metadata.
@@ -99,19 +181,17 @@ class TestDashboardXssInert:
 
     def test_no_html_sink_receives_report_derived_data(self) -> None:
         """Static-analysis guard: every innerHTML/insertAdjacentHTML/outerHTML
-        assignment in the dashboard's <script> must be a literal-only clear
-        (e.g. `x.innerHTML = ""`), never fed anything derived from the
-        report (`data.*`, `r.*`, or a local computed from `r.details` like
-        `detailsText`). This is the exact regression class a future edit
-        could introduce (e.g. switching a textContent line to innerHTML for
-        "richer" formatting) without anyone touching security-header tests.
+        assignment in the dashboard's JS (static/app.js, external per the CSP
+        fix) must be a literal-only clear (e.g. `x.innerHTML = ""`), never fed
+        anything derived from the report (`data.*`, `r.*`, or a local computed
+        from `r.details` like `detailsText`). This is the exact regression
+        class a future edit could introduce (e.g. switching a textContent
+        line to innerHTML for "richer" formatting) without anyone touching
+        security-header tests.
         """
-        from trajlens.web.app import _INDEX_HTML
+        from trajlens.web.app import _STATIC_DIR
 
-        html = _INDEX_HTML.read_text()
-        script_match = re.search(r"<script>(.*?)</script>", html, re.DOTALL)
-        assert script_match is not None, "index.html must contain a <script> block"
-        script = script_match.group(1)
+        script = (_STATIC_DIR / "app.js").read_text()
 
         # Report-derived identifiers this script ever holds untrusted content in.
         # detailsText/detailBox/tdMsg etc. are all ultimately assigned via
