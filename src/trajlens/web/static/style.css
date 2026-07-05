@@ -1,0 +1,53 @@
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, monospace;
+  background: #0f1117;
+  color: #e2e8f0;
+  margin: 0;
+  padding: 2rem;
+  line-height: 1.6;
+}
+h1 { color: #f8fafc; font-size: 1.4rem; margin-bottom: 0.25rem; }
+h2 { color: #f8fafc; font-size: 1.1rem; margin-top: 2rem; }
+.meta { color: #94a3b8; font-size: 0.9rem; margin-bottom: 2rem; }
+table { border-collapse: collapse; width: 100%; margin-bottom: 1rem; }
+th { text-align: left; color: #94a3b8; font-weight: 600;
+     border-bottom: 1px solid #334155; padding: 0.5rem 1rem; }
+td { padding: 0.5rem 1rem; border-bottom: 1px solid #1e293b; vertical-align: top; }
+tr.result-row { cursor: pointer; }
+tr.result-row:hover td { background: #161c2c; }
+.sev-ERROR { color: #f87171; font-weight: bold; }
+.sev-FAIL  { color: #f87171; }
+.sev-WARN  { color: #fbbf24; }
+.sev-INFO  { color: #34d399; }
+.summary { background: #1e293b; border-radius: 0.5rem; padding: 1.5rem;
+           display: flex; gap: 2rem; align-items: center; }
+.score { font-size: 2.5rem; font-weight: bold; }
+.score-label { color: #94a3b8; font-size: 0.8rem; }
+.grade { font-size: 1.2rem; }
+.grade-PASS  { color: #34d399; }
+.grade-WARN  { color: #fbbf24; }
+.grade-FAIL  { color: #f87171; }
+.grade-ERROR { color: #f87171; font-weight: bold; }
+.gauge-track { width: 220px; height: 10px; border-radius: 999px; background: #334155;
+               overflow: hidden; margin-top: 0.5rem; }
+.gauge-fill { height: 100%; border-radius: 999px; }
+.details {
+  display: none;
+  background: #161c2c;
+  border: 1px solid #1e293b;
+  border-radius: 0.375rem;
+  padding: 0.75rem 1rem;
+  margin: 0 0 1rem 0;
+  font-size: 0.85rem;
+  color: #cbd5e1;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.details.open { display: block; }
+#error { color: #f87171; }
+#loading { color: #94a3b8; }
+
+/* Toggled via classList from app.js instead of inline style="" attributes
+   or el.style.display -- style-src-attr blocks both under this dashboard's
+   CSP (script-src 'self'; style-src 'self'), which forbids unsafe-inline. */
+.hidden { display: none; }
