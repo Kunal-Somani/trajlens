@@ -75,6 +75,27 @@ class TestApiReport:
         fail_result = next(r for r in data["results"] if r["severity"] == "FAIL")
         assert fail_result["details"] == {"violations": [{"episode_index": 0}]}
 
+    def test_report_surfaces_per_episode_and_episodes_summary(self) -> None:
+        results = [
+            CheckResult(
+                check_id="STRUCTURAL.VERSION_DETECTED", severity=Severity.INFO, message="v3.0"
+            ),
+            CheckResult(
+                check_id="STRUCTURAL.METADATA_DATA_AGREEMENT",
+                severity=Severity.FAIL,
+                message="span mismatch on episode 0",
+                per_episode={0: "episode 0 mismatch"},
+            ),
+        ]
+        report_json = render_json("some/dataset", DatasetVersion.V3_0, 3, 300, results)
+        app = create_app(report_json)
+        client = TestClient(app)
+
+        data = client.get("/api/report").json()
+        fail_result = next(r for r in data["results"] if r["severity"] == "FAIL")
+        assert fail_result["per_episode"] == {"0": "episode 0 mismatch"}
+        assert data["episodes"]["worst"][0]["episode_index"] == 0
+
 
 class TestIndexRoute:
     def test_index_serves_html(self) -> None:
@@ -107,6 +128,14 @@ class TestIndexRoute:
         assert "javascript" in resp.headers["content-type"]
         assert "http://" not in resp.text
         assert "https://" not in resp.text
+
+    def test_index_has_episodes_section_headers(self) -> None:
+        """v0.3 T1: the dashboard shell must carry the episodes-view markup."""
+        client = _client()
+        body = client.get("/").text
+        assert 'id="episodes-section"' in body
+        assert 'id="episodes-heading"' in body
+        assert 'id="episodes-body"' in body
 
 
 class TestDashboardNoInlineContent:

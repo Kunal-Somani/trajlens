@@ -70,6 +70,19 @@ def lint(
         str | None,
         typer.Option("--sarif", help="Write SARIF 2.1.0 report to this path."),
     ] = None,
+    share: Annotated[
+        bool,
+        typer.Option(
+            "--share",
+            help="Print a redacted finding summary to stdout, for pasting into a GitHub issue.",
+        ),
+    ] = False,
+    share_out: Annotated[
+        str | None,
+        typer.Option(
+            "--share-out", help="Write the --share summary to this path instead of stdout."
+        ),
+    ] = None,
 ) -> None:
     """Validate a LeRobotDataset and report its quality grade."""
     import sys
@@ -84,6 +97,7 @@ def lint(
         render_json,
         render_json_load_error,
         render_sarif,
+        render_share,
         render_terminal,
     )
     from trajlens.sources.loader import SourceLoader
@@ -116,6 +130,13 @@ def lint(
     if sarif is not None:
         sarif_doc = render_sarif(ref, ds.version, ds.num_episodes, ds.num_frames, results)
         Path(sarif).write_text(sarif_doc, encoding="utf-8")
+
+    if share or share_out is not None:
+        share_doc = render_share(ds.version, results)
+        if share_out is not None:
+            Path(share_out).write_text(share_doc, encoding="utf-8")
+        else:
+            typer.echo(share_doc)
 
     if worst >= Severity.FAIL or worst >= Severity.ERROR:
         sys.exit(2)

@@ -285,10 +285,12 @@ class _PerEpisodeStatsMatchCheck:
             )
 
         violations: list[str] = []
+        per_episode: dict[int, str] = {}
 
         for episode in ds:
             # Recompute per-episode stats via Welford streaming.
             accumulators = _stream_feature_columns(ds, episodes=[episode])
+            ep_findings: list[str] = []
 
             if ds.version is DatasetVersion.V3_0:
                 # Per-episode stats are inline in the episode metadata Parquet.
@@ -313,15 +315,19 @@ class _PerEpisodeStatsMatchCheck:
 
                     for sm, ss in zip(stored_means, stored_stds, strict=False):
                         if _relative_error(sm, acc.mean) > _STATS_RTOL:
-                            violations.append(
+                            finding = (
                                 f"episode {episode.episode_index} feature {feat_name!r}: "
                                 f"stored mean={sm:.8g} vs recomputed={acc.mean:.8g}"
                             )
+                            violations.append(finding)
+                            ep_findings.append(finding)
                         if _relative_error(ss, acc.std) > _STATS_RTOL:
-                            violations.append(
+                            finding = (
                                 f"episode {episode.episode_index} feature {feat_name!r}: "
                                 f"stored std={ss:.8g} vs recomputed={acc.std:.8g}"
                             )
+                            violations.append(finding)
+                            ep_findings.append(finding)
 
             elif ds.version is DatasetVersion.V2_1:
                 # v2.1 episodes_stats.jsonl is loaded by the source layer;
@@ -345,15 +351,22 @@ class _PerEpisodeStatsMatchCheck:
 
                     for sm, ss in zip(stored_means, stored_stds, strict=False):
                         if _relative_error(sm, acc.mean) > _STATS_RTOL:
-                            violations.append(
+                            finding = (
                                 f"episode {episode.episode_index} feature {feat_name!r}: "
                                 f"stored mean={sm:.8g} vs recomputed={acc.mean:.8g}"
                             )
+                            violations.append(finding)
+                            ep_findings.append(finding)
                         if _relative_error(ss, acc.std) > _STATS_RTOL:
-                            violations.append(
+                            finding = (
                                 f"episode {episode.episode_index} feature {feat_name!r}: "
                                 f"stored std={ss:.8g} vs recomputed={acc.std:.8g}"
                             )
+                            violations.append(finding)
+                            ep_findings.append(finding)
+
+            if ep_findings:
+                per_episode[episode.episode_index] = " | ".join(ep_findings)
 
             if len(violations) >= 10:
                 break  # Cap output; first batch is enough to diagnose.
@@ -367,6 +380,7 @@ class _PerEpisodeStatsMatchCheck:
                     f"({len(violations)} issue(s)): {violations[0]}"
                 ),
                 details={"violations": violations, "rtol": _STATS_RTOL},
+                per_episode=per_episode or None,
             )
         return CheckResult(
             check_id=self.id,

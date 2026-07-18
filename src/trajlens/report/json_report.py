@@ -15,10 +15,23 @@ Schema:
         "severity": str,
         "category": str,
         "message": str,
-        "details": dict  # check-specific structured detail, shape varies by check_id
+        "details": dict,  # check-specific structured detail, shape varies by check_id
+        "per_episode": dict[str, str] | absent  # episode_index (as string) -> finding;
+                                                 # present only when the check populated it
       },
       ...
-    ]
+    ],
+    "episodes": {  # absent entirely if no check produced per-episode data
+      "worst": [
+        {
+          "episode_index": int,
+          "finding_count": int,
+          "trust_contribution": int,
+          "finding_counts_by_check": dict[str, int]
+        },
+        ...  # up to 5, worst first
+      ]
+    }
   }
 
 Exit codes (enforced by CLI, not this module):
@@ -32,6 +45,7 @@ from __future__ import annotations
 import json
 
 from trajlens.checks.protocol import CheckResult, Severity
+from trajlens.report.episodes import worst_episodes
 from trajlens.report.trust_score import SCORE_FORMULA_VERSION, compute_trust_score
 from trajlens.sources.version import DatasetVersion
 
@@ -57,6 +71,19 @@ def render_json(
     worst = max((r.severity for r in results), default=Severity.INFO)
     score = compute_trust_score(results)
 
+    result_entries: list[dict[str, object]] = []
+    for r in results:
+        entry: dict[str, object] = {
+            "check_id": r.check_id,
+            "severity": r.severity.value,
+            "category": r.check_id.split(".")[0],
+            "message": r.message,
+            "details": r.details,
+        }
+        if r.per_episode is not None:
+            entry["per_episode"] = {str(k): v for k, v in r.per_episode.items()}
+        result_entries.append(entry)
+
     payload: dict[str, object] = {
         "ref": ref,
         "version": version.value,
@@ -65,17 +92,23 @@ def render_json(
         "grade": _grade(worst),
         "num_episodes": num_episodes,
         "num_frames": num_frames,
-        "results": [
-            {
-                "check_id": r.check_id,
-                "severity": r.severity.value,
-                "category": r.check_id.split(".")[0],
-                "message": r.message,
-                "details": r.details,
-            }
-            for r in results
-        ],
+        "results": result_entries,
     }
+
+    worst_eps = worst_episodes(results)
+    if worst_eps:
+        payload["episodes"] = {
+            "worst": [
+                {
+                    "episode_index": e.episode_index,
+                    "finding_count": e.finding_count,
+                    "trust_contribution": e.trust_contribution,
+                    "finding_counts_by_check": e.finding_counts_by_check,
+                }
+                for e in worst_eps
+            ]
+        }
+
     return json.dumps(payload, indent=2)
 
 
