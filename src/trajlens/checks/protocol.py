@@ -71,16 +71,20 @@ class CheckContext:
 class CheckResult:
     """The outcome of running a single check against a dataset.
 
-    check_id  — the stable identifier of the check that produced this result.
-    severity  — the categorical verdict (ERROR/FAIL/WARN/INFO).
-    message   — a human-readable summary; must be actionable and non-empty.
-    details   — optional structured detail dict for machine consumers (JSON output).
+    check_id     — the stable identifier of the check that produced this result.
+    severity     — the categorical verdict (ERROR/FAIL/WARN/INFO).
+    message      — a human-readable summary; must be actionable and non-empty.
+    details      — optional structured detail dict for machine consumers (JSON output).
+    per_episode  — optional map of episode_index -> finding detail string, for checks
+                   that have per-episode granularity internally. Absent (None) means the
+                   check does not support per-episode attribution, never an empty dict.
     """
 
     check_id: str
     severity: Severity
     message: str
     details: dict[str, object] = field(default_factory=dict)
+    per_episode: dict[int, str] | None = None
 
 
 # Import after Severity/CheckResult/CheckContext are defined to avoid a

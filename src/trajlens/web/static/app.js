@@ -102,6 +102,45 @@ function render(data) {
       });
     }
   });
+
+  renderEpisodes(data.episodes);
+}
+
+function renderEpisodes(episodes) {
+  var section = document.getElementById("episodes-section");
+  if (!episodes || !episodes.worst || episodes.worst.length === 0) {
+    section.classList.add("hidden");
+    return;
+  }
+  section.classList.remove("hidden");
+
+  var body = document.getElementById("episodes-body");
+  body.innerHTML = "";
+  episodes.worst.forEach(function (ep) {
+    var row = document.createElement("tr");
+
+    var tdIdx = document.createElement("td");
+    tdIdx.textContent = String(ep.episode_index);
+
+    var tdContribution = document.createElement("td");
+    tdContribution.textContent = String(ep.trust_contribution);
+
+    var tdCount = document.createElement("td");
+    tdCount.textContent = String(ep.finding_count);
+
+    var tdByCheck = document.createElement("td");
+    var byCheckParts = [];
+    Object.keys(ep.finding_counts_by_check || {}).forEach(function (checkId) {
+      byCheckParts.push(checkId + ": " + ep.finding_counts_by_check[checkId]);
+    });
+    tdByCheck.textContent = byCheckParts.join(", ");
+
+    row.appendChild(tdIdx);
+    row.appendChild(tdContribution);
+    row.appendChild(tdCount);
+    row.appendChild(tdByCheck);
+    body.appendChild(row);
+  });
 }
 
 function renderError(message) {

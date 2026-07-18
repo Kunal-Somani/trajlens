@@ -64,6 +64,7 @@ class _TimestampMonotonicCheck:
 
     def run(self, ds: CanonicalDataset, ctx: CheckContext) -> CheckResult:
         violations: list[str] = []
+        per_episode: dict[int, str] = {}
 
         cache = ShardColumnCache(["timestamp"])
         for episode in ds:
@@ -75,10 +76,12 @@ class _TimestampMonotonicCheck:
 
             for i in range(1, len(ts_col)):
                 if ts_col[i] <= ts_col[i - 1]:
-                    violations.append(
+                    finding = (
                         f"Episode {episode.episode_index}: timestamp[{i}]={ts_col[i]:.6f} "
                         f"<= timestamp[{i - 1}]={ts_col[i - 1]:.6f} (not strictly increasing)"
                     )
+                    violations.append(finding)
+                    per_episode[episode.episode_index] = finding
                     break  # One violation per episode is sufficient signal.
 
             if violations:
@@ -90,6 +93,7 @@ class _TimestampMonotonicCheck:
                 severity=Severity.FAIL,
                 message=f"Timestamps not strictly monotonic: {violations[0]}",
                 details={"violations": violations},
+                per_episode=per_episode or None,
             )
         return CheckResult(
             check_id=self.id,

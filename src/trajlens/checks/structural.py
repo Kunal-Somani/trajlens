@@ -258,6 +258,7 @@ class _MetadataDataAgreementCheck:
 
     def run(self, ds: CanonicalDataset, ctx: CheckContext) -> CheckResult:
         violations: list[str] = []
+        per_episode: dict[int, str] = {}
 
         # 1. Declared num_episodes must match actual episode count.
         if ds.num_episodes != len(list(ds)):
@@ -280,22 +281,30 @@ class _MetadataDataAgreementCheck:
             data = cache.get_episode_data(ds, episode)
             ep_mask = data["episode_index"]
             actual_rows = len(ep_mask)
+            ep_findings: list[str] = []
 
             if actual_rows != episode.length:
-                violations.append(
+                finding = (
                     f"Episode {episode.episode_index}: declared length={episode.length} "
                     f"but actual row count={actual_rows} in shard"
                 )
+                violations.append(finding)
+                ep_findings.append(finding)
 
             # from/to must span exactly `length` frames.
             declared_span = episode.dataset_to_index - episode.dataset_from_index
             if declared_span != episode.length:
-                violations.append(
+                finding = (
                     f"Episode {episode.episode_index}: "
                     f"dataset_to_index - dataset_from_index = {declared_span} "
                     f"!= declared length {episode.length} (from={episode.dataset_from_index}, "
                     f"to={episode.dataset_to_index})"
                 )
+                violations.append(finding)
+                ep_findings.append(finding)
+
+            if ep_findings:
+                per_episode[episode.episode_index] = " | ".join(ep_findings)
 
             if len(violations) >= 5:
                 break  # Cap output; first few failures are sufficient signal.
@@ -309,6 +318,7 @@ class _MetadataDataAgreementCheck:
                     f"{violations[0]}"
                 ),
                 details={"violations": violations},
+                per_episode=per_episode or None,
             )
         return CheckResult(
             check_id=self.id,
