@@ -26,14 +26,20 @@ class FrameChange:
     column         — the column that would be rewritten.
     old_value      — the value currently stored on disk.
     new_value      — the corrected value the fixer would write.
+
+    old_value/new_value are int | float rather than a single type because
+    per-frame columns are not all the same dtype: timestamp (REPAIR.
+    TIMESTAMP_DEDRIFT) is float, task_index (REPAIR.TASK_INDEX_REPAIR) is
+    int64. Each fixer writes back through its own column's declared Arrow
+    dtype, so the value is never coerced across that boundary.
     """
 
     episode_index: int
     frame_index: int
     shard_path: str
     column: str
-    old_value: float
-    new_value: float
+    old_value: int | float
+    new_value: int | float
 
 
 @dataclass(frozen=True, slots=True)
