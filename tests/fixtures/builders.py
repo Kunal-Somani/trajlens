@@ -810,6 +810,86 @@ def build_v3_real_video(root: Path, *, camera: str = "top") -> None:
     _write_real_mp4(video_path)
 
 
+def build_v3_video_fps_mismatch(
+    root: Path, *, camera: str = "top", declared_fps: int = 30, container_fps: int = 24
+) -> None:
+    """Build a v3.0 dataset whose declared info.json fps disagrees with the video container.
+
+    Mirrors the real corruption this fixer targets: info.json's fps field is
+    wrong, but the frames themselves were always captured/timestamped at the
+    container's true rate. So the data shard's timestamp/frame_index columns
+    are written at container_fps (the ground truth, matching the video), and
+    only info.json's declared fps is wrong (declared_fps) -- this is what
+    keeps TEMPORAL checks clean both before AND after REPAIR.VIDEO_METADATA_SYNC
+    corrects the declared fps to agree with the container.
+    """
+    build_v3_dataset(root, camera=camera, fps=container_fps)
+    info_path = root / "meta" / "info.json"
+    info = json.loads(info_path.read_text())
+    info["fps"] = declared_fps
+    info_path.write_text(json.dumps(info))
+
+    video_path = root / "videos" / camera / "chunk-000" / "file-000.mp4"
+    _write_real_mp4(video_path, fps=container_fps)
+
+
+def build_v3_video_fps_match(root: Path, *, camera: str = "top", fps: int = 30) -> None:
+    """Build a v3.0 dataset whose declared fps agrees with the video container.
+
+    Used as the clean/no-op fixture for REPAIR.VIDEO_METADATA_SYNC.
+    """
+    build_v3_dataset(root, camera=camera, fps=fps)
+    video_path = root / "videos" / camera / "chunk-000" / "file-000.mp4"
+    _write_real_mp4(video_path, fps=fps)
+
+
+def build_v3_no_video_feature(root: Path) -> None:
+    """Build a v3.0 dataset that declares no camera/video feature at all.
+
+    Used for REPAIR.VIDEO_METADATA_SYNC's "no video feature declared" refusal.
+    """
+    total_frames = 3 * FRAMES_PER_EPISODE
+    info = {
+        "codebase_version": "v3.0",
+        "fps": 30,
+        "features": dict(DEFAULT_FEATURES),
+        "total_episodes": 3,
+        "total_frames": total_frames,
+    }
+    (root / "meta").mkdir(parents=True, exist_ok=True)
+    (root / "meta" / "info.json").write_text(json.dumps(info))
+
+    data_dir = root / "data" / "chunk-000"
+    data_dir.mkdir(parents=True, exist_ok=True)
+    pq.write_table(_write_frames_table(3, fps=30), data_dir / "file-000.parquet")
+
+    episode_rows: list[dict[str, Any]] = []
+    for ep in range(3):
+        from_idx = ep * FRAMES_PER_EPISODE
+        episode_rows.append(
+            {
+                "episode_index": ep,
+                "tasks": [DEFAULT_TASK],
+                "length": FRAMES_PER_EPISODE,
+                "data/chunk_index": 0,
+                "data/file_index": 0,
+                "dataset_from_index": from_idx,
+                "dataset_to_index": from_idx + FRAMES_PER_EPISODE,
+                "meta/episodes/chunk_index": 0,
+                "meta/episodes/file_index": 0,
+            }
+        )
+    columns = {key: [row[key] for row in episode_rows] for key in episode_rows[0]}
+    episodes_dir = root / "meta" / "episodes" / "chunk-000"
+    episodes_dir.mkdir(parents=True, exist_ok=True)
+    pq.write_table(pa.table(columns), episodes_dir / "file-000.parquet")
+
+    tasks_table = pa.table(
+        {"task_index": pa.array([0], type=pa.int64()), "task": pa.array([DEFAULT_TASK])}
+    )
+    pq.write_table(tasks_table, root / "meta" / "tasks.parquet")
+
+
 def build_v3_wrong_feature_shape(root: Path, *, camera: str = "top") -> None:
     """Build a v3.0 dataset where 'action' column has wrong declared shape.
 

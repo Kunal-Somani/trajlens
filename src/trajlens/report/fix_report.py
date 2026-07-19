@@ -33,10 +33,10 @@ import json
 from rich.console import Console
 
 from trajlens.repair.orchestrator import FixPlan
-from trajlens.repair.protocol import BoundaryChange, FrameChange, StatChange
+from trajlens.repair.protocol import BoundaryChange, FeatureFieldChange, FrameChange, StatChange
 
 
-def _change_summary(change: FrameChange | StatChange | BoundaryChange) -> str:
+def _change_summary(change: FrameChange | StatChange | BoundaryChange | FeatureFieldChange) -> str:
     # Parentheses, not brackets: rich.Console.print() treats [...] as markup
     # tag syntax and silently swallows unrecognized tags (e.g. a column or
     # field name like "[timestamp]" or "[dataset_to_index]" would vanish).
@@ -47,6 +47,8 @@ def _change_summary(change: FrameChange | StatChange | BoundaryChange) -> str:
         )
     if isinstance(change, StatChange):
         return f"{change.feature}.{change.stat_key}: {change.old_value} -> {change.new_value}"
+    if isinstance(change, FeatureFieldChange):
+        return f"{change.feature}.{change.field}: {change.old_value} -> {change.new_value}"
     return (
         f"episode {change.episode_index} ({change.field}): {change.old_value} -> {change.new_value}"
     )
