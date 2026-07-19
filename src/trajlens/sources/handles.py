@@ -20,11 +20,23 @@ def open_parquet_shard(path: Path) -> pq.ParquetFile:
     """Open a Parquet shard lazily; row groups stream on read, never the whole file."""
     if not path.is_file():
         raise DatasetFormatError(f"expected parquet shard not found: {path}")
-    # pyarrow's ParquetFile constructor remains untyped through 24.x despite
-    # partial py.typed support added in pyarrow 19+; the per-module mypy
-    # override (disallow_untyped_calls = false) does not suppress this for
-    # reasons not fully understood -- suppressing at the call site instead.
-    return pq.ParquetFile(path)  # type: ignore[no-untyped-call]
+    try:
+        # pyarrow's ParquetFile constructor remains untyped through 24.x despite
+        # partial py.typed support added in pyarrow 19+; the per-module mypy
+        # override (disallow_untyped_calls = false) does not suppress this for
+        # reasons not fully understood -- suppressing at the call site instead.
+        return pq.ParquetFile(path)  # type: ignore[no-untyped-call]
+    except Exception as exc:
+        # pyarrow raises ArrowInvalid (and other pyarrow.lib exception types)
+        # for a corrupt or non-Parquet file, never a trajlens-typed error --
+        # a raw ArrowInvalid traceback must never reach a CLI user (manual's
+        # "errors are typed" rule). This is a dataset input problem, not a
+        # trajlens bug, so it's DatasetFormatError, not CheckExecutionError.
+        raise DatasetFormatError(
+            f"{path} is not a valid Parquet file (could not open it: {exc}). "
+            "Check that the file is not truncated or corrupted, and that the "
+            "dataset was written by a compatible LeRobot version."
+        ) from exc
 
 
 @dataclass(frozen=True, slots=True)
@@ -64,10 +76,20 @@ def open_hub_parquet_shard(repo_id: str, revision: str | None, path: str) -> pq.
     fs = HfFileSystem(revision=revision)
     try:
         f = fs.open(f"datasets/{repo_id}/{path}", "rb", cache_type="all")
-        return pq.ParquetFile(f)  # type: ignore[no-untyped-call]
     except Exception as exc:
         raise DatasetFormatError(
-            f"expected parquet shard not found on Hub: {repo_id}/{path}"
+            f"expected parquet shard not found on Hub: {repo_id}/{path} ({exc})"
+        ) from exc
+    try:
+        return pq.ParquetFile(f)  # type: ignore[no-untyped-call]
+    except Exception as exc:
+        # Distinct from the fetch failure above: the shard was found and
+        # fetched, but pyarrow could not parse it as Parquet (corrupt upload,
+        # LFS pointer file mistaken for data, etc.) -- a raw ArrowInvalid must
+        # never reach a CLI user (manual's "errors are typed" rule).
+        raise DatasetFormatError(
+            f"Hub shard {repo_id}/{path} is not a valid Parquet file (could not open "
+            f"it: {exc}). The upload may be corrupted or truncated."
         ) from exc
 
 
