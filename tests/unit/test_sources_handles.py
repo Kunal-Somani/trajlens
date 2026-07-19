@@ -23,6 +23,18 @@ class TestOpenParquetShard:
         with pytest.raises(DatasetFormatError, match="expected parquet shard not found"):
             open_parquet_shard(tmp_path / "nope.parquet")
 
+    def test_corrupt_file_raises_typed_error_naming_the_file(self, tmp_path: Path) -> None:
+        """A file that exists but isn't valid Parquet must raise DatasetFormatError
+        naming the path, never a raw pyarrow.lib.ArrowInvalid traceback."""
+        corrupt = tmp_path / "corrupt.parquet"
+        corrupt.write_bytes(b"not a valid parquet file")
+
+        with pytest.raises(DatasetFormatError) as exc_info:
+            open_parquet_shard(corrupt)
+
+        assert str(corrupt) in str(exc_info.value)
+        assert "not a valid Parquet file" in str(exc_info.value)
+
 
 class TestOpenHubParquetShard:
     def test_opens_with_whole_file_cache(self, tmp_path: Path) -> None:
@@ -49,6 +61,21 @@ class TestOpenHubParquetShard:
     def test_missing_shard_raises_format_error(self) -> None:
         with pytest.raises(DatasetFormatError, match="expected parquet shard not found on Hub"):
             open_hub_parquet_shard("org/does-not-exist", None, "data/chunk-000/file-000.parquet")
+
+    def test_corrupt_fetched_shard_raises_typed_error(self, tmp_path: Path) -> None:
+        """A shard that fetches successfully but isn't valid Parquet must raise
+        DatasetFormatError, never a raw pyarrow.lib.ArrowInvalid traceback."""
+        corrupt = tmp_path / "corrupt.parquet"
+        corrupt.write_bytes(b"not a valid parquet file")
+
+        fake_fs = MagicMock()
+        fake_fs.open.return_value = corrupt.open("rb")
+
+        with (
+            patch("huggingface_hub.HfFileSystem", return_value=fake_fs),
+            pytest.raises(DatasetFormatError, match="not a valid Parquet file"),
+        ):
+            open_hub_parquet_shard("org/repo", None, "data/chunk-000/file-000.parquet")
 
 
 class TestOpenVideoShard:

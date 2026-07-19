@@ -20,6 +20,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+import pyarrow as pa
 import pyarrow.parquet as pq
 
 from trajlens.errors import DatasetFormatError
@@ -34,6 +35,23 @@ V3_EPISODES_DIR = ("meta", "episodes")
 V3_TASKS_PATH = ("meta", "tasks.parquet")
 LEGACY_EPISODES_PATH = ("meta", "episodes.jsonl")
 LEGACY_TASKS_PATH = ("meta", "tasks.jsonl")
+
+
+def _read_parquet_table(pf: pq.ParquetFile, *, shard_label: str) -> pa.Table:
+    """Read *pf*'s full table, wrapping pyarrow row-group decode failures.
+
+    Opening a ParquetFile only reads the footer (sources/handles.py
+    open_parquet_shard already wraps that); a corrupt row group can still
+    raise ArrowInvalid here, on the actual .read(). A raw ArrowInvalid must
+    never reach a CLI user (manual's "errors are typed" rule).
+    """
+    try:
+        return pf.read()  # type: ignore[no-untyped-call]
+    except Exception as exc:
+        raise DatasetFormatError(
+            f"{shard_label} could not be read as Parquet (row-group decode failed: {exc}). "
+            "The file may be truncated or corrupted."
+        ) from exc
 
 
 def build_canonical_dataset(handle: SourceHandle) -> CanonicalDataset:
@@ -185,9 +203,9 @@ def _build_v3(handle: SourceHandle) -> CanonicalDataset:
 
 
 def _load_v3_task_table(handle: SourceHandle) -> dict[int, str]:
-    # ParquetFile.read() is untyped through pyarrow 24.x; see the matching
-    # suppression on ParquetFile's constructor in sources/handles.py.
-    table = handle.parquet_shard(*V3_TASKS_PATH).read()  # type: ignore[no-untyped-call]
+    table = _read_parquet_table(
+        handle.parquet_shard(*V3_TASKS_PATH), shard_label="meta/tasks.parquet"
+    )
     try:
         indices = table.column("task_index").to_pylist()
     except KeyError as exc:
@@ -237,7 +255,8 @@ def _load_v3_episodes(
     rows: list[dict[str, Any]] = []
     for shard_path in shard_paths:
         relative_parts = shard_path.relative_to(handle.root).parts
-        table = handle.parquet_shard(*relative_parts).read()  # type: ignore[no-untyped-call]
+        shard_label = "/".join(relative_parts)
+        table = _read_parquet_table(handle.parquet_shard(*relative_parts), shard_label=shard_label)
         rows.extend(table.to_pylist())
         check_resource_bound(len(rows), max_value=MAX_DECLARED_EPISODES, what="episode count")
 

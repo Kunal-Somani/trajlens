@@ -202,6 +202,42 @@ class TestFailureModes:
         with pytest.raises(DatasetFormatError, match="no video metadata"):
             ds.video_segment_for_episode(ep, "does-not-exist")
 
+    def test_corrupt_episode_metadata_shard_raises_typed_error_naming_file(
+        self, tmp_path: Path
+    ) -> None:
+        """A corrupt meta/episodes/ shard must raise DatasetFormatError naming
+        the file, never a raw pyarrow.lib.ArrowInvalid traceback."""
+        build_v3_dataset(tmp_path, num_episodes=1, camera="top")
+        shard_path = tmp_path / "meta" / "episodes" / "chunk-000" / "file-000.parquet"
+        shard_path.write_bytes(b"not a valid parquet file")
+
+        with pytest.raises(DatasetFormatError, match="not a valid Parquet file"):
+            build_canonical_dataset(_resolve(tmp_path))
+
+    def test_corrupt_tasks_parquet_raises_typed_error_naming_file(self, tmp_path: Path) -> None:
+        """A corrupt meta/tasks.parquet must raise DatasetFormatError naming
+        the file, never a raw pyarrow.lib.ArrowInvalid traceback."""
+        build_v3_dataset(tmp_path, num_episodes=1, camera="top")
+        tasks_path = tmp_path / "meta" / "tasks.parquet"
+        tasks_path.write_bytes(b"not a valid parquet file")
+
+        with pytest.raises(DatasetFormatError, match="not a valid Parquet file"):
+            build_canonical_dataset(_resolve(tmp_path))
+
+    def test_corrupt_data_shard_raises_typed_error_on_access(self, tmp_path: Path) -> None:
+        """A corrupt data/ shard doesn't fail at build_canonical_dataset() time
+        (data shards are only opened lazily, per parquet_shard_for_episode's
+        own docstring) but must still raise DatasetFormatError, never a raw
+        pyarrow.lib.ArrowInvalid traceback, when actually accessed."""
+        build_v3_dataset(tmp_path, num_episodes=1, camera="top")
+        ds = build_canonical_dataset(_resolve(tmp_path))
+        ep = ds.episode(0)
+        data_path = tmp_path / "data" / "chunk-000" / "file-000.parquet"
+        data_path.write_bytes(b"not a valid parquet file")
+
+        with pytest.raises(DatasetFormatError, match="not a valid Parquet file"):
+            ds.parquet_shard_for_episode(ep)
+
 
 class TestTasksParquetSchemaCompat:
     """Regression tests for the real Hub tasks.parquet schema (Bug 4 / M7 fix).
