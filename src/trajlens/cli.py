@@ -162,6 +162,33 @@ def fix(
             "--out", help="Output path for the repaired dataset copy. Required with --apply."
         ),
     ] = None,
+    only: Annotated[
+        str | None,
+        typer.Option(
+            "--only",
+            help=(
+                "Comma-separated fixer id(s) to run, bypassing the normal "
+                "WARN+ selection threshold (e.g. --only REPAIR.TASK_INDEX_REPAIR)."
+            ),
+        ),
+    ] = None,
+    except_: Annotated[
+        str | None,
+        typer.Option(
+            "--except",
+            help="Comma-separated fixer id(s) to exclude from the otherwise-applicable set.",
+        ),
+    ] = None,
+    quarantine: Annotated[
+        bool,
+        typer.Option(
+            "--quarantine",
+            help=(
+                "REPAIR.ORPHAN_SHARD_REPORT only: move orphan shards to "
+                "<output>/.trajlens-quarantine/ instead of just reporting them."
+            ),
+        ),
+    ] = False,
     json_output: Annotated[
         bool,
         typer.Option("--json", help="Emit machine-readable JSON report to stdout."),
@@ -174,14 +201,17 @@ def fix(
     fixer's repair. Only local datasets can be repaired: a Hub ref's data and
     video shards are streamed on demand, never fully present on disk to copy.
 
+    A fixer may report no-op if an earlier repair already resolved its finding.
+
     Exit codes:
       0 = nothing to fix (dataset already agrees with data for every
           applicable check)
       1 = fixes proposed (dry-run) or applied (--apply) successfully
       2 = could not fix: dataset failed to load, invalid usage (--apply
-          without --out, or --out same as the source), or a fixer refused to
-          repair (RepairError) because the underlying data is itself
-          internally inconsistent
+          without --out, --out same as the source, or an invalid/conflicting
+          --only/--except selection), or a fixer refused to repair
+          (RepairError) because the underlying data is itself internally
+          inconsistent
     """
     import sys
     from pathlib import Path
@@ -189,27 +219,38 @@ def fix(
     from trajlens.checks import CheckContext, CheckEngine, registry
     from trajlens.errors import DatasetError, RepairError
     from trajlens.model import build_canonical_dataset
-    from trajlens.repair.orchestrator import refuse_if_hub_ref, run_apply, run_dry_run
+    from trajlens.repair.orchestrator import (
+        build_fixer_order,
+        refuse_if_hub_ref,
+        run_apply,
+        run_dry_run,
+        validate_fixer_selection,
+    )
     from trajlens.report import render_fix_json, render_fix_json_error, render_fix_terminal
     from trajlens.sources.loader import SourceLoader
 
-    if not dry_run and out is None:
-        message = "--apply requires --out <path> (never writes to an implicit location)."
+    def _fail_usage(message: str) -> None:
         if json_output:
             typer.echo(render_fix_json_error(ref, "UsageError", message))
         else:
             typer.echo(f"ERROR: {message}", err=True)
         raise typer.Exit(code=2)
 
+    if not dry_run and out is None:
+        _fail_usage("--apply requires --out <path> (never writes to an implicit location).")
+
     if out is not None:
         source_candidate = Path(ref)
         if source_candidate.exists() and source_candidate.resolve() == Path(out).resolve():
-            message = "--out must not be the same path as the source dataset (copy-on-write)."
-            if json_output:
-                typer.echo(render_fix_json_error(ref, "UsageError", message))
-            else:
-                typer.echo(f"ERROR: {message}", err=True)
-            raise typer.Exit(code=2)
+            _fail_usage("--out must not be the same path as the source dataset (copy-on-write).")
+
+    only_ids = frozenset(i.strip() for i in only.split(",") if i.strip()) if only else frozenset()
+    except_ids = (
+        frozenset(i.strip() for i in except_.split(",") if i.strip()) if except_ else frozenset()
+    )
+    selection_error = validate_fixer_selection(only_ids, except_ids)
+    if selection_error is not None:
+        _fail_usage(selection_error)
 
     try:
         handle = SourceLoader().resolve(ref)
@@ -231,13 +272,18 @@ def fix(
     ctx = CheckContext(deep=False)
     engine = CheckEngine(registry)
     results = engine.run(ds, ctx)
+    fixer_order = build_fixer_order(quarantine=quarantine)
 
     try:
         if dry_run:
-            plan = run_dry_run(ds, results)
+            plan = run_dry_run(
+                ds, results, fixer_order=fixer_order, only=only_ids, except_=except_ids
+            )
         else:
             assert out is not None  # guarded above
-            plan = run_apply(ds, results, Path(out))
+            plan = run_apply(
+                ds, results, Path(out), fixer_order=fixer_order, only=only_ids, except_=except_ids
+            )
     except RepairError as exc:
         if json_output:
             typer.echo(render_fix_json_error(ref, type(exc).__name__, str(exc)))

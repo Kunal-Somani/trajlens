@@ -36,18 +36,34 @@ signature or relaxing its source-root guard, which is a protocol change all
 three fixers depend on, not a CLI detail (flagged in the PR, not made
 silently).
 
-Fixed fixer order -- episode_reindex, then timestamp_dedrift, then
-stats_recompute -- chosen because stats_recompute streams data column
-values (including timestamp) to recompute mean/std/min/max
-(checks/statistical.py _stream_feature_columns), so it must run AFTER
-timestamp_dedrift or it would compute "correct" statistics over still-wrong
-timestamps. episode_reindex has no such dependency: _stream_feature_columns
-filters rows by the row-level episode_index column directly, never by
+Fixed fixer order -- episode_reindex, timestamp_dedrift, stats_recompute,
+task_index_repair, video_metadata_sync, orphan_shard_report -- chosen
+because stats_recompute streams data column values (including timestamp)
+to recompute mean/std/min/max (checks/statistical.py
+_stream_feature_columns), so it must run AFTER timestamp_dedrift or it
+would compute "correct" statistics over still-wrong timestamps.
+episode_reindex has no such dependency: _stream_feature_columns filters
+rows by the row-level episode_index column directly, never by
 dataset_from_index/dataset_to_index, so reindexing does not change what
 stats_recompute streams. episode_reindex is placed first only because
 "structural boundaries agree with data" is the more fundamental invariant to
 restore first; timestamp_dedrift and episode_reindex have no dependency on
 each other in either order.
+
+task_index_repair (rewrites task_index only), video_metadata_sync
+(rewrites meta/info.json's fps only), and orphan_shard_report (only ever
+moves already-unreferenced files) are appended after the original three:
+none of them read or write a column or field any other fixer touches, so
+they have no ordering dependency on the first three or each other --
+placed last simply because they were added later, not because order matters
+for them.
+
+Note: video_metadata_sync's target check, VIDEO.RESOLUTION_FPS_MATCH, is
+not yet implemented (checks/video.py defers it to a later milestone), so
+this fixer can never be selected automatically by select_applicable_fixers's
+WARN+-in-results threshold -- it is only reachable via explicit --only
+selection today. This is a known, pre-existing gap in the check suite, not
+a bug in fixer selection.
 """
 
 from __future__ import annotations
@@ -61,18 +77,48 @@ from trajlens.checks.protocol import CheckResult, Severity
 from trajlens.errors import RepairError
 from trajlens.model import CanonicalDataset, build_canonical_dataset
 from trajlens.repair.episode_reindex import EpisodeReindexFixer
+from trajlens.repair.orphan_shard_report import OrphanShardReportFixer
 from trajlens.repair.protocol import Diff, Fixer, RepairSummary
 from trajlens.repair.stats_recompute import StatsRecomputeFixer
+from trajlens.repair.task_index_repair import TaskIndexRepairFixer
 from trajlens.repair.timestamp_dedrift import TimestampDedriftFixer
+from trajlens.repair.video_metadata_sync import VideoMetadataSyncFixer
 from trajlens.sources.loader import SourceHandle, SourceLoader
 
 # Fixed application order -- see module docstring for why this order and not
-# applicable-fixer-discovery order.
+# applicable-fixer-discovery order. quarantine=False here is the always-safe
+# default; a caller wanting --quarantine passes its own OrphanShardReportFixer
+# instance to select_applicable_fixers instead of relying on this tuple (see
+# build_fixer_order()).
 _FIXER_ORDER: tuple[Fixer, ...] = (
     EpisodeReindexFixer(),
     TimestampDedriftFixer(),
     StatsRecomputeFixer(),
+    TaskIndexRepairFixer(),
+    VideoMetadataSyncFixer(),
+    OrphanShardReportFixer(),
 )
+
+ALL_FIXER_IDS: tuple[str, ...] = tuple(fixer.fixer_id for fixer in _FIXER_ORDER)
+
+
+def build_fixer_order(*, quarantine: bool = False) -> tuple[Fixer, ...]:
+    """Return the fixed fixer order, substituting a quarantine-enabled
+    OrphanShardReportFixer when *quarantine* is True.
+
+    A separate function rather than a mutable module-level tuple: _FIXER_ORDER
+    must stay a stable, side-effect-free constant (every other caller,
+    including tests, relies on it never changing), so a caller that wants
+    --quarantine builds its own copy of the order instead.
+    """
+    if not quarantine:
+        return _FIXER_ORDER
+    return tuple(
+        OrphanShardReportFixer(quarantine=True)
+        if isinstance(fixer, OrphanShardReportFixer)
+        else fixer
+        for fixer in _FIXER_ORDER
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -108,17 +154,52 @@ class FixPlan:
     applied: bool
 
 
-def select_applicable_fixers(results: list[CheckResult]) -> list[Fixer]:
-    """Return the fixers (in fixed application order) whose check fired at WARN+.
+def select_applicable_fixers(
+    results: list[CheckResult],
+    *,
+    fixer_order: tuple[Fixer, ...] = _FIXER_ORDER,
+    only: frozenset[str] | None = None,
+    except_: frozenset[str] | None = None,
+) -> list[Fixer]:
+    """Return the fixers (in *fixer_order*) to run for this `fix` invocation.
 
-    Mirrors the threshold the fixers' own round-trip tests use for "this
-    finding is present": severity >= Severity.WARN.
+    Default selection (only/except_ both None or empty): every fixer whose
+    check fired at WARN+ -- mirrors the threshold the fixers' own round-trip
+    tests use for "this finding is present".
+
+    *only*, if non-empty, replaces the WARN+ threshold entirely: exactly the
+    named fixer ids run, regardless of whether their check fired. This is the
+    only way to reach a fixer whose target check is not yet implemented (e.g.
+    REPAIR.VIDEO_METADATA_SYNC -- see module docstring) or to preview a
+    specific fixer's effect in isolation.
+
+    *except_*, if non-empty, removes the named fixer ids from whichever set
+    --only or the WARN+ threshold would otherwise have selected.
+
+    Both parameters take fixer ids already validated by the caller (CLI
+    validates --only/--except against ALL_FIXER_IDS and rejects contradictions
+    before calling into lint/fix at all); this function does not re-validate.
     """
-    fired_check_ids = {r.check_id for r in results if r.severity >= Severity.WARN}
-    return [fixer for fixer in _FIXER_ORDER if fixer.check_id in fired_check_ids]
+    if only:
+        base = [fixer for fixer in fixer_order if fixer.fixer_id in only]
+    else:
+        fired_check_ids = {r.check_id for r in results if r.severity >= Severity.WARN}
+        base = [fixer for fixer in fixer_order if fixer.check_id in fired_check_ids]
+
+    if except_:
+        base = [fixer for fixer in base if fixer.fixer_id not in except_]
+
+    return base
 
 
-def run_dry_run(ds: CanonicalDataset, results: list[CheckResult]) -> FixPlan:
+def run_dry_run(
+    ds: CanonicalDataset,
+    results: list[CheckResult],
+    *,
+    fixer_order: tuple[Fixer, ...] = _FIXER_ORDER,
+    only: frozenset[str] | None = None,
+    except_: frozenset[str] | None = None,
+) -> FixPlan:
     """Compute the combined Diff for every applicable fixer; writes nothing.
 
     Each fixer's dry_run() is called against the ORIGINAL ds -- dry-run never
@@ -128,7 +209,7 @@ def run_dry_run(ds: CanonicalDataset, results: list[CheckResult]) -> FixPlan:
     A RepairError from any fixer propagates to the caller (the CLI renders it
     as a clean user-facing message, per the manual's error rule).
     """
-    fixers = select_applicable_fixers(results)
+    fixers = select_applicable_fixers(results, fixer_order=fixer_order, only=only, except_=except_)
     outcomes = tuple(
         FixerOutcome(
             fixer_id=fixer.fixer_id,
@@ -142,7 +223,15 @@ def run_dry_run(ds: CanonicalDataset, results: list[CheckResult]) -> FixPlan:
     return FixPlan(applicable=applicable, outcomes=outcomes, output_path=None, applied=False)
 
 
-def run_apply(ds: CanonicalDataset, results: list[CheckResult], output_path: Path) -> FixPlan:
+def run_apply(
+    ds: CanonicalDataset,
+    results: list[CheckResult],
+    output_path: Path,
+    *,
+    fixer_order: tuple[Fixer, ...] = _FIXER_ORDER,
+    only: frozenset[str] | None = None,
+    except_: frozenset[str] | None = None,
+) -> FixPlan:
     """Apply every applicable fixer in sequence, chaining through temp copies.
 
     See the module docstring for the full composition-order rationale. Each
@@ -160,7 +249,7 @@ def run_apply(ds: CanonicalDataset, results: list[CheckResult], output_path: Pat
     per 06_SECURITY_AND_THREAT_MODEL.md T9. Temp directories from fixers
     that already ran successfully before the failure are still cleaned up.
     """
-    fixers = select_applicable_fixers(results)
+    fixers = select_applicable_fixers(results, fixer_order=fixer_order, only=only, except_=except_)
     # Diffs must be computed up front (each against the ORIGINAL ds, before any
     # fixer has written anything) purely to know which fixer is the LAST one
     # that will actually write -- so that fixer's apply() can target
@@ -257,3 +346,32 @@ def refuse_if_hub_ref(handle: SourceHandle, ref: str) -> None:
             "Download the dataset locally first (e.g. with `huggingface-cli download` "
             "or `snapshot_download`), then run `trajlens fix` against the local path."
         )
+
+
+def validate_fixer_selection(only: frozenset[str], except_: frozenset[str]) -> str | None:
+    """Validate --only/--except fixer ids before any lint or fixer work starts.
+
+    Returns a clean, actionable error message (naming the invalid or
+    conflicting id(s) and listing ALL_FIXER_IDS) if selection is invalid;
+    returns None if selection is valid. The caller (cli.py) is responsible
+    for exiting with code 2 and printing the message -- this function never
+    raises or exits itself, matching every other CLI usage-error check in
+    fix() (e.g. --apply without --out).
+    """
+    known = set(ALL_FIXER_IDS)
+    valid_ids_list = ", ".join(ALL_FIXER_IDS)
+
+    unknown_only = only - known
+    unknown_except = except_ - known
+    unknown = unknown_only | unknown_except
+    if unknown:
+        return f"unknown fixer id(s) {sorted(unknown)!r}. Valid fixer ids: {valid_ids_list}."
+
+    conflicting = only & except_
+    if conflicting:
+        return (
+            f"fixer id(s) {sorted(conflicting)!r} appear in both --only and --except, "
+            "which is a contradiction. Remove the id from one of the two."
+        )
+
+    return None

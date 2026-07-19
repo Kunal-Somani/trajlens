@@ -14,6 +14,7 @@ from tests.fixtures.builders import (
     build_v3_drift_and_wrong_stats,
     build_v3_interleaved_episode_data,
     build_v3_metadata_data_disagreement,
+    build_v3_orphan_data_shard,
     build_v3_real_video,
 )
 from trajlens.cli import app
@@ -572,3 +573,140 @@ class TestFixCompositionOrder:
         }
         new_findings = post_bad_ids - pre_bad_ids
         assert not new_findings, f"fix --apply introduced new findings: {new_findings}"
+
+
+class TestFixHelp:
+    def test_help_mentions_mid_chain_noop_semantics(self) -> None:
+        result = runner.invoke(app, ["fix", "--help"])
+        assert result.exit_code == 0
+        assert "no-op if an earlier repair already resolved its finding" in result.output
+
+    def test_help_lists_only_except_quarantine_flags(self) -> None:
+        result = runner.invoke(app, ["fix", "--help"])
+        assert "--only" in result.output
+        assert "--except" in result.output
+        assert "--quarantine" in result.output
+
+
+class TestFixOnlyExcept:
+    def test_only_invalid_id_exits_2_with_valid_ids_listed(self, tmp_path: Path) -> None:
+        source = tmp_path / "source"
+        build_v3_dataset(source, num_episodes=3)
+
+        result = runner.invoke(app, ["fix", str(source), "--only", "not_a_real_fixer"])
+
+        assert result.exit_code == 2
+        assert "not_a_real_fixer" in result.output
+        assert "REPAIR.EPISODE_REINDEX" in result.output  # valid ids listed
+        assert result.exception is None or isinstance(result.exception, SystemExit)
+
+    def test_except_invalid_id_exits_2(self, tmp_path: Path) -> None:
+        source = tmp_path / "source"
+        build_v3_dataset(source, num_episodes=3)
+
+        result = runner.invoke(app, ["fix", str(source), "--except", "not_a_real_fixer"])
+
+        assert result.exit_code == 2
+        assert "not_a_real_fixer" in result.output
+
+    def test_same_id_in_only_and_except_exits_2_before_any_work(self, tmp_path: Path) -> None:
+        source = tmp_path / "source"
+        build_v3_dataset(source, num_episodes=3)
+
+        result = runner.invoke(
+            app,
+            [
+                "fix",
+                str(source),
+                "--only",
+                "REPAIR.TASK_INDEX_REPAIR",
+                "--except",
+                "REPAIR.TASK_INDEX_REPAIR",
+            ],
+        )
+
+        assert result.exit_code == 2
+        assert "REPAIR.TASK_INDEX_REPAIR" in result.output
+        assert "contradiction" in result.output.lower()
+
+    def test_invalid_selection_json_error_schema(self, tmp_path: Path) -> None:
+        source = tmp_path / "source"
+        build_v3_dataset(source, num_episodes=3)
+
+        result = runner.invoke(app, ["fix", str(source), "--only", "not_a_real_fixer", "--json"])
+        data = json.loads(result.output)
+
+        assert data["error_category"] == "UsageError"
+        assert "not_a_real_fixer" in data["error_message"]
+        assert data["fixers"] == []
+
+    def test_only_comma_separated_selects_multiple_fixers(self, tmp_path: Path) -> None:
+        source = tmp_path / "source"
+        build_v3_orphan_data_shard(source)
+
+        result = runner.invoke(
+            app,
+            [
+                "fix",
+                str(source),
+                "--json",
+                "--only",
+                "REPAIR.TASK_INDEX_REPAIR,REPAIR.ORPHAN_SHARD_REPORT",
+            ],
+        )
+        data = json.loads(result.output)
+
+        fixer_ids = {f["fixer_id"] for f in data["fixers"]}
+        assert fixer_ids == {"REPAIR.TASK_INDEX_REPAIR", "REPAIR.ORPHAN_SHARD_REPORT"}
+
+    def test_only_reaches_fixer_whose_check_never_fires(self, tmp_path: Path) -> None:
+        """REPAIR.VIDEO_METADATA_SYNC's target check is unimplemented, so it can
+        never be selected by default -- --only is the only way to invoke it.
+        Needs a real decodable video (VideoMetadataSyncFixer's own precondition),
+        not build_v3_dataset's placeholder MP4 stub."""
+        source = tmp_path / "source"
+        build_v3_real_video(source)
+
+        result = runner.invoke(
+            app, ["fix", str(source), "--json", "--only", "REPAIR.VIDEO_METADATA_SYNC"]
+        )
+        data = json.loads(result.output)
+
+        assert data["fixers"][0]["fixer_id"] == "REPAIR.VIDEO_METADATA_SYNC"
+
+    def test_except_excludes_default_selected_fixer(self, tmp_path: Path) -> None:
+        source = tmp_path / "source"
+        build_v3_metadata_data_disagreement(source, num_episodes=3)
+
+        result = runner.invoke(
+            app, ["fix", str(source), "--json", "--except", "REPAIR.EPISODE_REINDEX"]
+        )
+        data = json.loads(result.output)
+
+        assert data["fixers"] == []
+        assert data["applicable"] is False
+
+
+class TestFixQuarantine:
+    def test_apply_with_quarantine_moves_orphan_shard(self, tmp_path: Path) -> None:
+        source = tmp_path / "source"
+        out = tmp_path / "repaired"
+        build_v3_orphan_data_shard(source)
+
+        result = runner.invoke(
+            app, ["fix", "--apply", "--out", str(out), "--quarantine", str(source)]
+        )
+
+        assert result.exit_code == 1
+        assert (out / ".trajlens-quarantine" / "quarantine_manifest.json").is_file()
+
+    def test_apply_without_quarantine_leaves_orphan_in_place(self, tmp_path: Path) -> None:
+        source = tmp_path / "source"
+        out = tmp_path / "repaired"
+        build_v3_orphan_data_shard(source)
+
+        result = runner.invoke(app, ["fix", "--apply", "--out", str(out), str(source)])
+
+        assert result.exit_code == 1
+        assert not (out / ".trajlens-quarantine").exists()
+        assert (out / "data" / "chunk-000" / "file-001.parquet").is_file()
