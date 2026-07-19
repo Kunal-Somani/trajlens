@@ -576,6 +576,33 @@ class TestFixCompositionOrder:
 
 
 class TestFixHelp:
+    """--help output is rendered by typer's own rich-based console, not
+    render_fix_terminal, so it can't take a console= override the way
+    tests/unit/test_fix_report.py's renderer tests can. typer.rich_utils
+    bakes FORCE_TERMINAL/COLOR_SYSTEM/MAX_WIDTH into module-level globals
+    at import time from GITHUB_ACTIONS/FORCE_COLOR/PY_COLORS env vars
+    (typer/rich_utils.py) -- GitHub Actions sets GITHUB_ACTIONS, which
+    forces ANSI color codes and can split/style a literal substring like
+    "--only" into separate escape-coded spans, so a plain `"--only" in
+    result.output` check that passes locally (no such env var set) can
+    fail in CI. Fixed here by directly overriding those already-imported
+    globals for the duration of the test, forcing the same deterministic,
+    uncolored, wide rendering in every environment -- the same "force a
+    deterministic console" principle as test_fix_report.py's
+    Console(force_terminal=..., width=...), applied at the one point
+    where typer's own internal console isn't otherwise reachable. Any
+    future test asserting literal substrings against --help (or other
+    rich/typer-rendered) output should use this fixture.
+    """
+
+    @pytest.fixture(autouse=True)
+    def _deterministic_help_rendering(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        import typer.rich_utils as rich_utils
+
+        monkeypatch.setattr(rich_utils, "FORCE_TERMINAL", False)
+        monkeypatch.setattr(rich_utils, "COLOR_SYSTEM", None)
+        monkeypatch.setattr(rich_utils, "MAX_WIDTH", 200)
+
     def test_help_mentions_mid_chain_noop_semantics(self) -> None:
         result = runner.invoke(app, ["fix", "--help"])
         assert result.exit_code == 0
