@@ -890,6 +890,118 @@ def build_v3_no_video_feature(root: Path) -> None:
     pq.write_table(tasks_table, root / "meta" / "tasks.parquet")
 
 
+def build_v3_orphan_data_shard(
+    root: Path, *, num_episodes: int = 3, camera: str = "top", fps: int = 30
+) -> None:
+    """Build a valid v3.0 dataset plus one extra data shard no episode references.
+
+    Used as the primary trigger fixture for STRUCTURAL.ORPHAN_SHARD /
+    REPAIR.ORPHAN_SHARD_REPORT: every episode still resolves correctly to
+    data/chunk-000/file-000.parquet; a second file (file-001.parquet) exists
+    on disk but is never named by any episode's data/chunk_index +
+    data/file_index columns.
+    """
+    build_v3_dataset(root, num_episodes=num_episodes, camera=camera, fps=fps)
+    data_dir = root / "data" / "chunk-000"
+    pq.write_table(_write_frames_table(num_episodes, fps=fps), data_dir / "file-001.parquet")
+
+
+def build_v3_orphan_video_shard(
+    root: Path, *, num_episodes: int = 3, camera: str = "top", fps: int = 30
+) -> None:
+    """Build a valid v3.0 dataset plus one extra video shard no episode references.
+
+    Mirrors build_v3_orphan_data_shard but for the videos/ tree: an unreferenced
+    file-001.mp4 sits alongside the referenced file-000.mp4 for the same camera.
+    """
+    build_v3_dataset(root, num_episodes=num_episodes, camera=camera, fps=fps)
+    video_dir = root / "videos" / camera / "chunk-000"
+    (video_dir / "file-001.mp4").write_bytes(b"\x00")
+
+
+def build_v3_no_orphan_shards(
+    root: Path, *, num_episodes: int = 3, camera: str = "top", fps: int = 30
+) -> None:
+    """Build a valid v3.0 dataset with no orphan shards -- the clean/no-op fixture."""
+    build_v3_dataset(root, num_episodes=num_episodes, camera=camera, fps=fps)
+
+
+def build_v3_all_shards_orphaned(root: Path, *, camera: str = "top", fps: int = 30) -> None:
+    """Build a v3.0 dataset whose episode metadata is empty (no episode records at all).
+
+    With zero episode records there is nothing to anchor a referenced-shard
+    set against, so every shard on disk would trivially be "orphaned" -- the
+    refusal fixture for find_orphan_shards()'s fail-closed rule (empty
+    meta/episodes/ shard set, not merely empty rows within a shard).
+    """
+    build_v3_dataset(root, num_episodes=1, camera=camera, fps=fps)
+    episodes_dir = root / "meta" / "episodes" / "chunk-000"
+    for shard in episodes_dir.glob("*.parquet"):
+        shard.unlink()
+
+
+def build_v3_orphan_traversal_attempt(root: Path, *, num_episodes: int = 1, fps: int = 30) -> None:
+    """Build a v3.0 dataset whose sole camera key is a path-traversal payload.
+
+    info.json's features map is untrusted, attacker-controllable data (06
+    security rules). A camera key of "../evil" would, if not
+    containment-checked, resolve videos/../evil/chunk-000/file-000.mp4
+    outside the dataset root. Used as the refusal fixture for
+    find_orphan_shards()'s path-containment guard.
+
+    Built by hand (not via build_v3_dataset) so the malicious camera key
+    never reaches a plain filesystem join while constructing the fixture
+    itself -- only meta/info.json and meta/episodes/ need to declare it;
+    find_orphan_shards() must refuse before ever trying to write or stat
+    anything under the traversal path.
+    """
+    camera = "../evil"
+    total_frames = num_episodes * FRAMES_PER_EPISODE
+    info = {
+        "codebase_version": "v3.0",
+        "fps": fps,
+        "features": {**DEFAULT_FEATURES, **_video_feature(camera)},
+        "total_episodes": num_episodes,
+        "total_frames": total_frames,
+    }
+    (root / "meta").mkdir(parents=True, exist_ok=True)
+    (root / "meta" / "info.json").write_text(json.dumps(info))
+
+    data_dir = root / "data" / "chunk-000"
+    data_dir.mkdir(parents=True, exist_ok=True)
+    pq.write_table(_write_frames_table(num_episodes, fps=fps), data_dir / "file-000.parquet")
+
+    episode_rows: list[dict[str, Any]] = []
+    for ep in range(num_episodes):
+        from_idx = ep * FRAMES_PER_EPISODE
+        episode_rows.append(
+            {
+                "episode_index": ep,
+                "tasks": [DEFAULT_TASK],
+                "length": FRAMES_PER_EPISODE,
+                "data/chunk_index": 0,
+                "data/file_index": 0,
+                "dataset_from_index": from_idx,
+                "dataset_to_index": from_idx + FRAMES_PER_EPISODE,
+                "meta/episodes/chunk_index": 0,
+                "meta/episodes/file_index": 0,
+                f"videos/{camera}/chunk_index": 0,
+                f"videos/{camera}/file_index": 0,
+                f"videos/{camera}/from_timestamp": from_idx / fps,
+                f"videos/{camera}/to_timestamp": (from_idx + FRAMES_PER_EPISODE) / fps,
+            }
+        )
+    columns = {key: [row[key] for row in episode_rows] for key in episode_rows[0]}
+    episodes_dir = root / "meta" / "episodes" / "chunk-000"
+    episodes_dir.mkdir(parents=True, exist_ok=True)
+    pq.write_table(pa.table(columns), episodes_dir / "file-000.parquet")
+
+    tasks_table = pa.table(
+        {"task_index": pa.array([0], type=pa.int64()), "task": pa.array([DEFAULT_TASK])}
+    )
+    pq.write_table(tasks_table, root / "meta" / "tasks.parquet")
+
+
 def build_v3_wrong_feature_shape(root: Path, *, camera: str = "top") -> None:
     """Build a v3.0 dataset where 'action' column has wrong declared shape.
 
