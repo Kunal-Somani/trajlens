@@ -8,6 +8,7 @@ time via the singleton registry from checks/registry.py.
   STRUCTURAL.INDEX_CONTINUITY         (FAIL)
   STRUCTURAL.METADATA_DATA_AGREEMENT  (FAIL) — catches #2401 corruption
   STRUCTURAL.PATH_TEMPLATE_RESOLVES   (FAIL)
+  STRUCTURAL.ORPHAN_SHARD             (WARN)
 
 Note: REQUIRED_METADATA_PRESENT is intentionally absent.  Every metadata
 file it would check is already hard-required by the load pipeline:
@@ -399,3 +400,54 @@ class _PathTemplateResolvesCheck:
 
 PATH_TEMPLATE_RESOLVES: Check = _PathTemplateResolvesCheck()
 registry.register(PATH_TEMPLATE_RESOLVES)
+
+
+# ---------------------------------------------------------------------------
+# STRUCTURAL.ORPHAN_SHARD
+# ---------------------------------------------------------------------------
+# The reverse of PATH_TEMPLATE_RESOLVES: instead of checking that every
+# claimed shard exists, this enumerates shards that exist but are unclaimed
+# by any episode's metadata. v3.0 only -- v2.x's one-file-per-episode naming
+# means every file matching the naming convention is inherently "referenced"
+# by construction; there is no metadata-vs-disk indirection to diff against.
+
+
+class _OrphanShardCheck:
+    id = "STRUCTURAL.ORPHAN_SHARD"
+    severity = Severity.WARN
+    category = "STRUCTURAL"
+    requires_video = False
+
+    def run(self, ds: CanonicalDataset, ctx: CheckContext) -> CheckResult:
+        from trajlens.repair.orphan_shard_report import find_orphan_shards
+        from trajlens.sources.version import DatasetVersion
+
+        if ds.version is not DatasetVersion.V3_0:
+            return CheckResult(
+                check_id=self.id,
+                severity=Severity.INFO,
+                message="Skipped STRUCTURAL.ORPHAN_SHARD: only applicable to v3.0 datasets.",
+            )
+
+        orphans = find_orphan_shards(ds)
+        if orphans:
+            rel_paths = [o.relative_path for o in orphans]
+            return CheckResult(
+                check_id=self.id,
+                severity=Severity.WARN,
+                message=(
+                    f"{len(rel_paths)} shard(s) on disk are not referenced by any "
+                    f"episode's metadata: {rel_paths[0]}"
+                    f"{'...' if len(rel_paths) > 1 else ''}"
+                ),
+                details={"orphans": rel_paths},
+            )
+        return CheckResult(
+            check_id=self.id,
+            severity=Severity.INFO,
+            message="No orphan shards found; every data/video shard on disk is referenced.",
+        )
+
+
+ORPHAN_SHARD: Check = _OrphanShardCheck()
+registry.register(ORPHAN_SHARD)
