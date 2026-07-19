@@ -77,18 +77,36 @@ class BoundaryChange:
 
 
 @dataclass(frozen=True, slots=True)
+class FeatureFieldChange:
+    """A single declared-metadata-field change to a feature entry in info.json.
+
+    feature        — the feature name whose entry in info.json's features map
+                     would be rewritten (e.g. a camera key for a video feature).
+    field          — the metadata field being corrected (e.g. "fps", "frame_count").
+    old_value      — the value currently declared in info.json.
+    new_value      — the corrected value, derived from ground truth outside
+                     info.json (e.g. the video container's own metadata).
+    """
+
+    feature: str
+    field: str
+    old_value: int | float
+    new_value: int | float
+
+
+@dataclass(frozen=True, slots=True)
 class Diff:
     """Structured description of all changes a fixer would make.
 
-    changes        — ordered list of per-frame, per-stat, or per-boundary
-                     changes; empty when the dataset is already clean and the
-                     fixer is a no-op.
+    changes        — ordered list of per-frame, per-stat, per-boundary, or
+                     per-feature-field changes; empty when the dataset is
+                     already clean and the fixer is a no-op.
     check_id       — the check this fixer targets (e.g. "KNOWNBUG.TIMESTAMP_DRIFT").
     fixer_id       — stable identifier for the fixer.
     is_noop        — True when changes is empty; the fixer has nothing to do.
     """
 
-    changes: tuple[FrameChange | StatChange | BoundaryChange, ...]
+    changes: tuple[FrameChange | StatChange | BoundaryChange | FeatureFieldChange, ...]
     check_id: str
     fixer_id: str
 
