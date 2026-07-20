@@ -9,6 +9,66 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-07-21
+
+### Added
+- Per-episode findings (#37): `CheckResult` gains an optional `per_episode: dict[int, str] | None`
+  field, populated by the three checks with independent per-episode signal --
+  `STRUCTURAL.METADATA_DATA_AGREEMENT`, `TEMPORAL.TIMESTAMP_MONOTONIC`,
+  `STATISTICAL.PER_EPISODE_STATS_MATCH`. `trajlens lint --json` gains an
+  additive `episodes` key (worst-5 episodes ranked by trust contribution);
+  the web dashboard renders a worst-episodes table via the existing external
+  `app.js`/`style.css`
+- `trajlens lint --share` / `--share-out <file>` (#37): redacted single-file
+  JSON summary (trust score, grade, format version, per-check finding
+  counts, worst-5 episodes) for pasting into a GitHub issue. Never includes
+  `message`/`details`/`per_episode` free text, since check-authored strings
+  can embed local paths. Follow-up in this release adds a `dataset_ref`
+  field: the full Hub repo id for Hub datasets, or the local dataset
+  directory's basename only -- never a parent path component -- for local
+  paths
+- `REPAIR.TASK_INDEX_REPAIR` fixer (#38): repairs `SEMANTIC.TASK_INTEGRITY`'s
+  dangling-`task_index` finding using a nearest-valid-task heuristic
+  (`argmin(|defined_index - N|)`); refuses with `RepairError` on equidistant
+  candidates or an empty task table rather than guessing. v3.0 only
+- `REPAIR.VIDEO_METADATA_SYNC` fixer (#39): rewrites `info.json`'s declared
+  global `fps` to match the video container's own frame rate (read via PyAV,
+  the same `av.open()` entry point `VIDEO.DECODABLE_SPOTCHECK` already uses).
+  Targets `VIDEO.RESOLUTION_FPS_MATCH`, which remains catalog-only and
+  unimplemented as a standalone check -- this fixer's ground-truth read
+  bypasses it directly, and `--only` is the only way to invoke the fixer
+  since the WARN+ auto-selection threshold can never reach it
+- `STRUCTURAL.ORPHAN_SHARD` check (WARN) and `REPAIR.ORPHAN_SHARD_REPORT`
+  fixer (#40): detects v3.0 data/video shards on disk that no episode record
+  references (the reverse of `STRUCTURAL.PATH_TEMPLATE_RESOLVES`). Report-only
+  by default; `--quarantine` relocates orphans to
+  `<output>/.trajlens-quarantine/` with a manifest instead of just reporting
+  them. Deletion is never implemented anywhere in the module
+- `trajlens fix --only`/`--except` (#41): comma-separated fixer id(s) to
+  force-run or exclude, validated against the known fixer set before any
+  work starts; an unknown id or a same-id conflict between the two flags
+  exits 2 with a typed message. All six fixers (including the three added
+  in this release) are now wired into `trajlens fix`'s fixed execution order
+  -- they previously were not
+- Redaction-safe `dataset_ref` in issue reports and three GitHub issue forms
+  (`false_positive.yml`, `bug_report.yml`, `new_corruption_class.yml`) plus a
+  README "Found something?" section pointing to them
+
+### Fixed
+- `ArrowInvalid` typed-error wrap at the loader boundary (#41): a corrupt or
+  non-Parquet shard previously let a raw `pyarrow.lib.ArrowInvalid` traceback
+  escape from `open_parquet_shard` and `model/adapters.py`'s reads; now wrapped
+  in `DatasetFormatError` naming the file. `open_hub_parquet_shard`'s
+  not-found and found-but-corrupt cases are now distinguished with separate
+  messages instead of one conflated error
+
+### Changed
+- `repair/protocol.py`'s `FrameChange.old_value`/`new_value` widened from
+  `float` to `int | float` to correctly represent `task_index` (int64,
+  #38); zero behavior change to `timestamp_dedrift`, its only prior user
+- `uv.lock` is now committed (#41); previously gitignored, where the
+  on-disk copy had silently drifted a release behind `pyproject.toml`
+
 ## [0.2.0] - 2026-07-05
 
 ### Added
