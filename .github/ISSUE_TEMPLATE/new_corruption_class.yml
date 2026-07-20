@@ -1,0 +1,35 @@
+name: New corruption class
+description: You found a way a LeRobot dataset can be corrupted that trajlens doesn't check for yet.
+title: "[new corruption class] "
+labels: ["new-corruption-class"]
+body:
+  - type: input
+    id: dataset-format
+    attributes:
+      label: Dataset format
+      description: LeRobotDataset version (e.g. v2.1, v3.0) and any relevant feature config.
+      placeholder: v3.0
+    validations:
+      required: true
+  - type: textarea
+    id: corruption
+    attributes:
+      label: Corruption description
+      description: What is wrong with the data, concretely (which fields/files, what the bad state looks like).
+    validations:
+      required: true
+  - type: textarea
+    id: how-detected
+    attributes:
+      label: How did you detect it?
+      description: What tipped you off — a training failure, manual inspection, another tool, etc.
+    validations:
+      required: true
+  - type: textarea
+    id: share-output
+    attributes:
+      label: trajlens lint --share output (if applicable)
+      description: If trajlens already flags something related, paste the output of `trajlens lint <ref> --share` here.
+      render: json
+    validations:
+      required: false

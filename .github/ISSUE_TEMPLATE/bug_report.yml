@@ -1,0 +1,49 @@
+name: Bug report
+description: Something in trajlens itself is broken (crash, wrong CLI behavior, bad output).
+title: "[bug] "
+labels: ["bug"]
+body:
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: What you ran and what went wrong.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What did you expect instead?
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: trajlens version
+      description: Output of `trajlens --version`.
+      placeholder: trajlens 0.3.0
+    validations:
+      required: true
+  - type: input
+    id: dataset
+    attributes:
+      label: Dataset
+      description: Hugging Face Hub repo id (org/name), or "local" if it's a local-only dataset.
+      placeholder: lerobot/pusht
+    validations:
+      required: false
+  - type: textarea
+    id: share-output
+    attributes:
+      label: trajlens lint --share output (if applicable)
+      description: If this is about a lint/fix result, paste the output of `trajlens lint <ref> --share` here.
+      render: json
+    validations:
+      required: false
+  - type: textarea
+    id: logs
+    attributes:
+      label: Traceback or logs
+      render: shell
+    validations:
+      required: false
