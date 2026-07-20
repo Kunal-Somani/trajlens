@@ -1,0 +1,36 @@
+name: False positive
+description: A check flagged something that isn't actually wrong with the dataset.
+title: "[false positive] "
+labels: ["false-positive"]
+body:
+  - type: input
+    id: check-id
+    attributes:
+      label: Check ID
+      description: The check_id from the finding (e.g. STRUCTURAL.METADATA_DATA_AGREEMENT).
+      placeholder: STRUCTURAL.METADATA_DATA_AGREEMENT
+    validations:
+      required: true
+  - type: input
+    id: dataset
+    attributes:
+      label: Dataset
+      description: Hugging Face Hub repo id (org/name), or "local" if it's a local-only dataset.
+      placeholder: lerobot/pusht
+    validations:
+      required: true
+  - type: textarea
+    id: why
+    attributes:
+      label: Why is this wrong?
+      description: What makes this finding incorrect for this dataset.
+    validations:
+      required: true
+  - type: textarea
+    id: share-output
+    attributes:
+      label: trajlens lint --share output
+      description: Paste the output of `trajlens lint <ref> --share` here.
+      render: json
+    validations:
+      required: true

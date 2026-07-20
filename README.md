@@ -8,9 +8,9 @@ ruff for robot data — lint, fix, and generate clean LeRobotDataset datasets.
 
 ## Status
 
-v0.2.0, under active development.
+v0.3.0, under active development.
 
-`lint` is implemented and audited against the public Hub (see [Real-world audit](#real-world-audit-of-the-hub) below). `fix` (repair engine: timestamp drift, stats recomputation, episode reindexing) and `web` (read-only local dashboard) both ship as of v0.2.
+`lint` is implemented and audited against the public Hub (see [Real-world audit](#real-world-audit-of-the-hub) below). `fix` (repair engine: timestamp drift, stats recomputation, episode reindexing, task-index repair, video/info.json fps sync, orphan-shard reporting) and `web` (read-only local dashboard, now with a per-episode findings view) both ship, with `lint --share` for redacted issue-report sharing.
 
 ## Install
 
@@ -38,11 +38,17 @@ trajlens lint <path-or-org/dataset> --json   # machine-readable JSON report
 trajlens lint <path-or-org/dataset> --report out.html
 trajlens lint <path-or-org/dataset> --sarif out.sarif   # SARIF 2.1.0, for CI annotations
 trajlens lint <path-or-org/dataset> --deep   # also decode video and verify per-frame stats
+trajlens lint <path-or-org/dataset> --share  # redacted summary, for pasting into a GitHub issue
+trajlens lint <path-or-org/dataset> --share --share-out out.json  # write it to a file instead
 ```
 
 Exit codes follow lint-tool convention: `0` = clean, `1` = WARN present, `2` = FAIL or load ERROR — so `trajlens lint` composes directly into CI gates.
 
 By default, checks that require materializing a lot of data over the network (full video decode, per-frame stats reconciliation) are skipped for Hub datasets and reported as INFO/skipped rather than run. Pass `--deep` to force them; expect this to be significantly slower and to fetch the full dataset.
+
+The `--json`/`--report` output also includes a per-episode view: the three checks with independent per-episode signal (`STRUCTURAL.METADATA_DATA_AGREEMENT`, `TEMPORAL.TIMESTAMP_MONOTONIC`, `STATISTICAL.PER_EPISODE_STATS_MATCH`) attach a `per_episode` breakdown to their result, and the report surfaces the worst-5 episodes ranked by trust contribution. `--share` never includes this free text (see below) — only counts.
+
+`--share` is a redacted single-file JSON summary safe to paste publicly: trajlens version, trust score, grade, format version, per-check finding counts, the worst-5 episode list (indices and counts only), and a `dataset_ref` (the Hub repo id for Hub datasets, or the local directory's basename only — never any parent path component). It deliberately omits every check's free-text `message`/`details`/`per_episode` fields, since those can embed local filesystem paths.
 
 ### Repairing issues: `trajlens fix`
 
@@ -50,9 +56,14 @@ By default, checks that require materializing a lot of data over the network (fu
 trajlens fix <local-path>                       # dry-run: preview the diff, write nothing
 trajlens fix <local-path> --apply --out <path>  # write a repaired copy
 trajlens fix <local-path> --json                # machine-readable dry-run/apply report
+trajlens fix <local-path> --only REPAIR.TASK_INDEX_REPAIR       # run only these fixer(s)
+trajlens fix <local-path> --except REPAIR.ORPHAN_SHARD_REPORT   # run all applicable fixers except these
+trajlens fix <local-path> --apply --out <path> --quarantine     # orphan_shard_report: move orphans instead of just reporting
 ```
 
-`fix` lints the dataset, selects whichever of the three fixers apply to the findings (`REPAIR.TIMESTAMP_DEDRIFT`, `REPAIR.STATS_RECOMPUTE`, `REPAIR.EPISODE_REINDEX`), and runs them in a fixed order. It's copy-on-write — the source is never mutated — and dry-run by default. Only local datasets can be repaired: a Hub ref's data/video shards are streamed on demand and never fully present on disk to copy, so `fix` refuses Hub refs with a clean error rather than silently producing an incomplete repair.
+`fix` lints the dataset, selects whichever fixers apply to the findings, and runs them in a fixed order. Six fixers exist: `REPAIR.TIMESTAMP_DEDRIFT`, `REPAIR.STATS_RECOMPUTE`, `REPAIR.EPISODE_REINDEX`, `REPAIR.TASK_INDEX_REPAIR`, `REPAIR.VIDEO_METADATA_SYNC`, and `REPAIR.ORPHAN_SHARD_REPORT`. It's copy-on-write — the source is never mutated — and dry-run by default. Only local datasets can be repaired: a Hub ref's data/video shards are streamed on demand and never fully present on disk to copy, so `fix` refuses Hub refs with a clean error rather than silently producing an incomplete repair.
+
+`--only`/`--except` take comma-separated fixer ids and are validated against the known fixer set before any work starts; an unknown id, or the same id in both flags, exits 2 with a message naming the offending id(s). `--only` also bypasses the normal WARN+ selection threshold, which is the only way to reach `REPAIR.VIDEO_METADATA_SYNC` today — its target check, `VIDEO.RESOLUTION_FPS_MATCH`, is catalog-only and not yet implemented as a standalone check, so it never fires on its own. `--quarantine` only affects `REPAIR.ORPHAN_SHARD_REPORT`: without it, orphan shards are reported but never moved; with it, `apply()` relocates them to `<output>/.trajlens-quarantine/` and writes a manifest.
 
 Exit codes: `0` = nothing to fix, `1` = fixes proposed or applied, `2` = could not fix (load failure, invalid usage, or a fixer's refusal because the underlying data has no consistent repair).
 
@@ -63,6 +74,10 @@ trajlens web <path-or-org/dataset>
 ```
 
 Lints the dataset once and serves a read-only local dashboard over the result (binds to `127.0.0.1` only, no flag to widen the bind). It's a thin FastAPI shell over the same report the terminal/JSON renderers use — no separate lint logic, no writes, no route that accepts a path/ref/dataset id from the browser.
+
+## Found something?
+
+Run `trajlens lint <path-or-org/dataset> --share` and paste the output into one of the issue forms below. False positives are the most valuable report you can file — if a check flagged something that isn't actually wrong, [tell us](.github/ISSUE_TEMPLATE/false_positive.yml). There's also a form for [bugs](.github/ISSUE_TEMPLATE/bug_report.yml) and one for [new corruption classes](.github/ISSUE_TEMPLATE/new_corruption_class.yml) trajlens doesn't check for yet.
 
 ## Architecture
 
@@ -117,6 +132,7 @@ trajlens validates a [LeRobotDataset](https://github.com/huggingface/lerobot) (v
 | STRUCTURAL | `INDEX_CONTINUITY` | FAIL | Gaps or duplicates in `frame_index`/`episode_index`/global `index` columns. |
 | STRUCTURAL | `METADATA_DATA_AGREEMENT` | FAIL | Declared episode lengths/`from`-`to` boundaries disagree with actual Parquet row counts (catches [#2401](https://github.com/huggingface/lerobot/issues/2401)-class corruption). |
 | STRUCTURAL | `PATH_TEMPLATE_RESOLVES` | FAIL | A declared shard path (data or video) doesn't resolve to a readable file. |
+| STRUCTURAL | `ORPHAN_SHARD` | WARN | A data/video shard exists on disk (v3.0 only) that no episode record references — the reverse of `PATH_TEMPLATE_RESOLVES`. |
 | SEMANTIC | `FEATURE_DIMENSIONALITY` | FAIL | A feature's actual column width doesn't match its declared `shape`. |
 | SEMANTIC | `TASK_INTEGRITY` | FAIL | A `task_index` reference has no corresponding, non-empty task description. |
 | SEMANTIC | `LANGUAGE_PRESENT` | WARN | An episode has no non-empty language/task description. |

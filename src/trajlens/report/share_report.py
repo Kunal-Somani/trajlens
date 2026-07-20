@@ -33,11 +33,16 @@ def _grade(worst: Severity) -> str:
 def render_share(
     version: DatasetVersion,
     results: list[CheckResult],
+    *,
+    dataset_ref: str | None = None,
 ) -> str:
     """Return a redacted single-file JSON summary suitable for a GitHub issue.
 
     No local paths, no environment info: only counts, ids, and the dataset's
-    declared format version are included.
+    declared format version are included. *dataset_ref* identifies which
+    dataset this is about without leaking filesystem structure: callers must
+    pass the Hub repo id (full `org/name`) for Hub refs, or the basename only
+    -- never any parent path component -- for local paths.
     """
     worst = max((r.severity for r in results), default=Severity.INFO)
     score = compute_trust_score(results)
@@ -56,6 +61,8 @@ def render_share(
         "format_version": version.value,
         "finding_counts": finding_counts,
     }
+    if dataset_ref is not None:
+        payload["dataset_ref"] = dataset_ref
 
     worst_eps = worst_episodes(results)
     if worst_eps:

@@ -294,6 +294,50 @@ class TestSharePathRedaction:
         for line in doc.splitlines():
             assert re.match(r"^(/|~|/home)", line) is None
 
+    def test_share_dataset_ref_local_path_is_basename_only(self, tmp_path: Path) -> None:
+        """dataset_ref for a local path must be the basename only -- no parent component."""
+        dataset_dir = tmp_path / "nested_parent" / "my_dataset"
+        dataset_dir.mkdir(parents=True)
+        build_v3_metadata_data_disagreement(dataset_dir, num_episodes=3)
+        ds = _load(dataset_dir)
+        results = [METADATA_DATA_AGREEMENT.run(ds, CTX)]
+        doc = render_share(ds.version, results, dataset_ref=dataset_dir.name)
+        parsed = json.loads(doc)
+        assert parsed["dataset_ref"] == "my_dataset"
+        assert "nested_parent" not in doc
+        assert str(tmp_path) not in doc
+
+        def _scan(value: object) -> None:
+            if isinstance(value, str):
+                assert not value.startswith("/")
+                assert not value.startswith("~")
+                assert "nested_parent" not in value
+            elif isinstance(value, dict):
+                for v in value.values():
+                    _scan(v)
+            elif isinstance(value, list):
+                for v in value:
+                    _scan(v)
+
+        _scan(parsed)
+
+    def test_share_dataset_ref_hub_repo_id_is_kept_in_full(self, tmp_path: Path) -> None:
+        """dataset_ref for a Hub ref must be the full repo id (org/name), unredacted."""
+        build_v3_metadata_data_disagreement(tmp_path, num_episodes=3)
+        ds = _load(tmp_path)
+        results = [METADATA_DATA_AGREEMENT.run(ds, CTX)]
+        doc = render_share(ds.version, results, dataset_ref="some-org/some-dataset")
+        parsed = json.loads(doc)
+        assert parsed["dataset_ref"] == "some-org/some-dataset"
+
+    def test_share_dataset_ref_omitted_when_not_provided(self, tmp_path: Path) -> None:
+        build_v3_metadata_data_disagreement(tmp_path, num_episodes=3)
+        ds = _load(tmp_path)
+        results = [METADATA_DATA_AGREEMENT.run(ds, CTX)]
+        doc = render_share(ds.version, results)
+        parsed = json.loads(doc)
+        assert "dataset_ref" not in parsed
+
 
 class TestShareVersionHandling:
     def test_share_uses_dataset_version(self, tmp_path: Path) -> None:

@@ -132,7 +132,8 @@ def lint(
         Path(sarif).write_text(sarif_doc, encoding="utf-8")
 
     if share or share_out is not None:
-        share_doc = render_share(ds.version, results)
+        dataset_ref = handle.repo_id if handle.repo_id is not None else Path(ref).name
+        share_doc = render_share(ds.version, results, dataset_ref=dataset_ref)
         if share_out is not None:
             Path(share_out).write_text(share_doc, encoding="utf-8")
         else:
