@@ -22,7 +22,7 @@ jobs:
       - uses: actions/checkout@v4
       - name: Run trajlens
         id: trajlens
-        uses: Kunal-Somani/trajlens-action@v1
+        uses: Kunal-Somani/trajlens/.github/actions/lint@v0.4.0
         with:
           dataset-ref: lerobot/pusht
           deep: false

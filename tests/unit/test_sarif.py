@@ -80,5 +80,5 @@ class TestGithubActionDocs:
         docs_path = Path(__file__).parent.parent.parent / "docs" / "github-action.md"
         assert docs_path.exists()
         content = docs_path.read_text()
-        assert "uses: Kunal-Somani/trajlens-action@v1" in content
+        assert "uses: Kunal-Somani/trajlens/.github/actions/lint" in content
         assert "dataset-ref" in content
