@@ -75,3 +75,4 @@ major version bump.
   attacker-controlled on PR-triggered workflows against forked repos.
 - The action installs `trajlens` pinned to a specific released version,
   not `@latest`.
+
