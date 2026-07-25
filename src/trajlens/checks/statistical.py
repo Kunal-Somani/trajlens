@@ -130,6 +130,7 @@ class _StatsMatchDataCheck:
     severity = Severity.FAIL
     category = "STATISTICAL"
     requires_video = False
+    thread_safe = True
 
     def run(self, ds: CanonicalDataset, ctx: CheckContext) -> CheckResult:
         resolver_handle = getattr(ds._resolver, "handle", None)
@@ -258,6 +259,7 @@ class _PerEpisodeStatsMatchCheck:
     severity = Severity.WARN
     category = "STATISTICAL"
     requires_video = False
+    thread_safe = True
 
     def run(self, ds: CanonicalDataset, ctx: CheckContext) -> CheckResult:
         resolver_handle = getattr(ds._resolver, "handle", None)
@@ -512,6 +514,7 @@ class _ValueSanityCheck:
     severity = Severity.WARN
     category = "STATISTICAL"
     requires_video = False
+    thread_safe = True
 
     def run(self, ds: CanonicalDataset, ctx: CheckContext) -> CheckResult:
         resolver_handle = getattr(ds._resolver, "handle", None)

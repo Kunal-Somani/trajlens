@@ -107,6 +107,16 @@ def lint(
             help="With --baseline, also show unchanged findings (suppressed by default).",
         ),
     ] = False,
+    parallel: Annotated[
+        int,
+        typer.Option(
+            "--parallel",
+            help=(
+                "Number of parallel worker processes (default: 1, serial). "
+                "Values >1 use ProcessPoolExecutor."
+            ),
+        ),
+    ] = 1,
 ) -> None:
     """Validate a LeRobotDataset and report its quality grade."""
     import sys
@@ -143,7 +153,7 @@ def lint(
 
     ctx = CheckContext(deep=deep)
     engine = CheckEngine(registry)
-    results: list[CheckResult] = engine.run(ds, ctx)
+    results: list[CheckResult] = engine.run(ds, ctx, parallel=parallel)
 
     if update_baseline is not None:
         BaselineStore.from_results(results).save(Path(update_baseline))

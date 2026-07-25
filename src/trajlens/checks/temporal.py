@@ -61,6 +61,7 @@ class _TimestampMonotonicCheck:
     severity = Severity.FAIL
     category = "TEMPORAL"
     requires_video = False
+    thread_safe = True
 
     def run(self, ds: CanonicalDataset, ctx: CheckContext) -> CheckResult:
         violations: list[str] = []
@@ -118,6 +119,7 @@ class _TimestampSpacingCheck:
     severity = Severity.WARN
     category = "TEMPORAL"
     requires_video = False
+    thread_safe = True
 
     def run(self, ds: CanonicalDataset, ctx: CheckContext) -> CheckResult:
         ideal_spacing = 1.0 / ds.fps
@@ -206,6 +208,7 @@ class _TimestampDriftCheck:
     severity = Severity.FAIL
     category = "KNOWNBUG"
     requires_video = False
+    thread_safe = True
 
     def run(self, ds: CanonicalDataset, ctx: CheckContext) -> CheckResult:
         if "frame_index" not in ds.features:

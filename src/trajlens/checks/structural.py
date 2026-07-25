@@ -45,6 +45,7 @@ class _VersionDetectedCheck:
     severity = Severity.INFO
     category = "STRUCTURAL"
     requires_video = False
+    thread_safe = True
 
     def run(self, ds: CanonicalDataset, ctx: CheckContext) -> CheckResult:
         version_str = ds.version.value
@@ -84,6 +85,7 @@ class _SchemaConsistencyCheck:
     severity = Severity.FAIL
     category = "STRUCTURAL"
     requires_video = False
+    thread_safe = True
 
     def run(self, ds: CanonicalDataset, ctx: CheckContext) -> CheckResult:
         mismatches: list[str] = []
@@ -166,6 +168,7 @@ class _IndexContinuityCheck:
     severity = Severity.FAIL
     category = "STRUCTURAL"
     requires_video = False
+    thread_safe = True
 
     def run(self, ds: CanonicalDataset, ctx: CheckContext) -> CheckResult:
         if "frame_index" not in ds.features:
@@ -256,6 +259,7 @@ class _MetadataDataAgreementCheck:
     severity = Severity.FAIL
     category = "STRUCTURAL"
     requires_video = False
+    thread_safe = True
 
     def run(self, ds: CanonicalDataset, ctx: CheckContext) -> CheckResult:
         violations: list[str] = []
@@ -345,6 +349,7 @@ class _PathTemplateResolvesCheck:
     severity = Severity.FAIL
     category = "STRUCTURAL"
     requires_video = False
+    thread_safe = True
 
     def run(self, ds: CanonicalDataset, ctx: CheckContext) -> CheckResult:
         root = ds.stats.root
@@ -417,6 +422,7 @@ class _OrphanShardCheck:
     severity = Severity.WARN
     category = "STRUCTURAL"
     requires_video = False
+    thread_safe = True
 
     def run(self, ds: CanonicalDataset, ctx: CheckContext) -> CheckResult:
         from trajlens.repair.orphan_shard_report import find_orphan_shards

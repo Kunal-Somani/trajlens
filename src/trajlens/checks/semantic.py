@@ -59,6 +59,7 @@ class _FeatureDimensionalityCheck:
     severity = Severity.FAIL
     category = "SEMANTIC"
     requires_video = False
+    thread_safe = True
 
     def run(self, ds: CanonicalDataset, ctx: CheckContext) -> CheckResult:
         mismatches: list[str] = []
@@ -173,6 +174,7 @@ class _TaskIntegrityCheck:
     severity = Severity.FAIL
     category = "SEMANTIC"
     requires_video = False
+    thread_safe = True
 
     def run(self, ds: CanonicalDataset, ctx: CheckContext) -> CheckResult:
         violations: list[str] = []
@@ -252,6 +254,7 @@ class _CameraIntrinsicsPlausibleCheck:
     severity = Severity.INFO
     category = "SEMANTIC"
     requires_video = False
+    thread_safe = True
 
     def run(self, ds: CanonicalDataset, ctx: CheckContext) -> CheckResult:
         intrinsics_features = [
@@ -361,6 +364,7 @@ class _LanguagePresentCheck:
     severity = Severity.WARN
     category = "SEMANTIC"
     requires_video = False
+    thread_safe = True
 
     def run(self, ds: CanonicalDataset, ctx: CheckContext) -> CheckResult:
         # An episode has a language description if its tasks list is non-empty
