@@ -106,41 +106,60 @@ function render(data) {
   renderEpisodes(data.episodes);
 }
 
+var episodesSectionRevealed = false;
+
 function renderEpisodes(episodes) {
+  var toggle = document.getElementById("episodes-toggle");
   var section = document.getElementById("episodes-section");
-  if (!episodes || !episodes.worst || episodes.worst.length === 0) {
-    section.classList.add("hidden");
-    return;
-  }
-  section.classList.remove("hidden");
+  var table = document.getElementById("episodes-table");
+  var empty = document.getElementById("episodes-empty");
+
+  toggle.classList.remove("hidden");
+  episodesSectionRevealed = false;
+  section.classList.add("hidden");
+
+  var worst = episodes && episodes.worst ? episodes.worst : [];
 
   var body = document.getElementById("episodes-body");
   body.innerHTML = "";
-  episodes.worst.forEach(function (ep) {
-    var row = document.createElement("tr");
 
-    var tdIdx = document.createElement("td");
-    tdIdx.textContent = String(ep.episode_index);
+  if (worst.length === 0) {
+    table.classList.add("hidden");
+    empty.classList.remove("hidden");
+  } else {
+    empty.classList.add("hidden");
+    table.classList.remove("hidden");
+    worst.forEach(function (ep) {
+      var row = document.createElement("tr");
 
-    var tdContribution = document.createElement("td");
-    tdContribution.textContent = String(ep.trust_contribution);
+      var tdIdx = document.createElement("td");
+      tdIdx.textContent = String(ep.episode_index);
 
-    var tdCount = document.createElement("td");
-    tdCount.textContent = String(ep.finding_count);
+      var tdContribution = document.createElement("td");
+      tdContribution.textContent = String(ep.trust_contribution);
 
-    var tdByCheck = document.createElement("td");
-    var byCheckParts = [];
-    Object.keys(ep.finding_counts_by_check || {}).forEach(function (checkId) {
-      byCheckParts.push(checkId + ": " + ep.finding_counts_by_check[checkId]);
+      var tdCount = document.createElement("td");
+      tdCount.textContent = String(ep.finding_count);
+
+      var tdByCheck = document.createElement("td");
+      var byCheckParts = [];
+      Object.keys(ep.finding_counts_by_check || {}).forEach(function (checkId) {
+        byCheckParts.push(checkId + ": " + ep.finding_counts_by_check[checkId]);
+      });
+      tdByCheck.textContent = byCheckParts.join(", ");
+
+      row.appendChild(tdIdx);
+      row.appendChild(tdContribution);
+      row.appendChild(tdCount);
+      row.appendChild(tdByCheck);
+      body.appendChild(row);
     });
-    tdByCheck.textContent = byCheckParts.join(", ");
+  }
 
-    row.appendChild(tdIdx);
-    row.appendChild(tdContribution);
-    row.appendChild(tdCount);
-    row.appendChild(tdByCheck);
-    body.appendChild(row);
-  });
+  toggle.onclick = function () {
+    episodesSectionRevealed = !episodesSectionRevealed;
+    section.classList.toggle("hidden", !episodesSectionRevealed);
+  };
 }
 
 function renderError(message) {

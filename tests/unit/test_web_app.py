@@ -137,6 +137,22 @@ class TestIndexRoute:
         assert 'id="episodes-heading"' in body
         assert 'id="episodes-body"' in body
 
+    def test_episodes_toggle_button_exists(self) -> None:
+        """v0.4 T5: the episodes section is revealed via a toggle button, not
+        auto-shown, so the served HTML must carry the button element."""
+        client = _client()
+        body = client.get("/").text
+        assert re.search(r'<button[^>]+id=["\']episodes-toggle["\']', body)
+
+    def test_episodes_section_hidden_by_default(self) -> None:
+        """v0.4 T5: the episodes div must carry the 'hidden' CSS class in the
+        served HTML, since it is only revealed by clicking the toggle button."""
+        client = _client()
+        body = client.get("/").text
+        match = re.search(r'<div id="episodes-section"([^>]*)>', body)
+        assert match is not None
+        assert "hidden" in match.group(1)
+
 
 class TestDashboardNoInlineContent:
     """Structural substitute for a real browser's CSP enforcement.
@@ -228,7 +244,7 @@ class TestDashboardXssInert:
         # touching data. or r. (or a variable named after report content) is
         # flagged, since that is precisely how untrusted text could reach a
         # parsing sink instead of a text-node sink.
-        tainted_markers = ("data.", "r.", "detailsText", "renderDetails(")
+        tainted_markers = ("data.", "r.", "detailsText", "renderDetails(", "ep.", "episodes.")
 
         sink_pattern = re.compile(
             r"([A-Za-z_$][\w.$]*)\s*\.\s*(innerHTML|outerHTML)\s*=\s*([^;]+);"
@@ -294,6 +310,32 @@ class TestDashboardXssInert:
         # bare "<img" preceded by an HTML tag context. Since this route
         # always returns application/json (asserted in TestApiReport), a
         # browser will never parse this response body as HTML at all.
+        assert client.get("/api/report").headers["content-type"].startswith("application/json")
+
+    def test_hostile_per_episode_payload_renders_as_inert_text(self) -> None:
+        """v0.4 T5: a hostile dataset's per-episode finding text (e.g. a task
+        string echoed into a check's per_episode map) must reach the browser
+        only as JSON string data, exactly like .message/.details above --
+        the episodes-table rendering path added for the toggle feature must
+        not introduce a second, less-safe sink for report-derived content.
+        """
+        payload = "<script>alert(1)</script>"
+        hostile_results = [
+            CheckResult(
+                check_id="STRUCTURAL.METADATA_DATA_AGREEMENT",
+                severity=Severity.FAIL,
+                message="span mismatch on episode 0",
+                per_episode={0: payload},
+            ),
+        ]
+        report_json = render_json("hostile/dataset", DatasetVersion.V3_0, 1, 4, hostile_results)
+        app = create_app(report_json)
+        client = TestClient(app)
+
+        data = client.get("/api/report").json()
+        result = data["results"][0]
+
+        assert result["per_episode"] == {"0": payload}
         assert client.get("/api/report").headers["content-type"].startswith("application/json")
 
 
