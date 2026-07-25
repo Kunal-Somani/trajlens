@@ -9,6 +9,8 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-07-25
+
 ### Added
 - GitHub Actions composite action at `.github/actions/lint/`
   (`action.yml` + `entrypoint.sh`). `dataset-ref` passed as
@@ -18,6 +20,36 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 - Exit-code regression guard: 0=PASS, 1=WARN, 2=FAIL
 - `docs/github-action.md` with copy-pasteable workflow snippet
 - `jsonschema` added to dev dependencies for SARIF validation
+- `.trajlens-baseline.json` support (#45): `BaselineStore` with a
+  versioned identity key, validated via Pydantic before any field
+  access (06 T2). `trajlens lint --baseline <file>`,
+  `--update-baseline`, and `--show-unchanged` flags suppress findings
+  already recorded in the baseline so CI can adopt trajlens on an
+  existing dataset without a wall of pre-existing findings blocking
+  the first green run.
+- O(1)-memory guarantee audit and `--parallel` scanning (#46): every
+  check audited against the O(1)-memory guarantee (05 Engineering
+  Standards §6) and confirmed bounded by one shard's row count; result
+  recorded in `engine.py`. `_MAX_SHARD_ROWS` ceiling added so an
+  oversized shard produces `ERROR` for data-reading checks instead of
+  attempting to process it. `thread_safe` field added to the `Check`
+  Protocol; `trajlens lint --parallel <n>` runs thread-safe checks
+  across a `ProcessPoolExecutor`, each check's result written to its
+  own indexed slot with no shared mutable state between workers
+  (06 T3). `docs/performance.md` added.
+- `trajlens watch` (#47): live lint during recording. `Watcher` lints
+  changed episode shards incrementally as a recording rig writes them;
+  every detected path is containment-checked via `safe_join` before
+  use (06 T4). Refuses Hub refs early since watch mode's streaming
+  model doesn't apply to immutable post-upload Hub datasets. `--deep`
+  opts into video checks per detected episode.
+
+### Fixed
+- Dashboard per-episode toggle button (#48): the episodes section
+  stays hidden until a "Show per-episode breakdown" toggle is
+  clicked, showing the worst-5 table when per-episode data exists.
+  XSS guard coverage extended to the per-episode payload and toggle
+  markup.
 
 ## [0.3.0] - 2026-07-21
 
