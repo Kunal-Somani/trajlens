@@ -92,7 +92,7 @@ packages = ["src/trajlens"]
 "docs/performance.md" = "trajlens/docs/performance.md"
 
 [tool.hatch.build.targets.sdist]
-include = ["src/", "tests/", "README.md", "LICENSE", "CHANGELOG.md"]
+include = ["src/", "tests/", "docs/", "README.md", "LICENSE", "CHANGELOG.md"]
 
 # ── ruff ─────────────────────────────────────────────────────────────────────
 [tool.ruff]
