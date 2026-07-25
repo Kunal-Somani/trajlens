@@ -9,6 +9,16 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ## [Unreleased]
 
+### Added
+- GitHub Actions composite action at `.github/actions/lint/`
+  (`action.yml` + `entrypoint.sh`). `dataset-ref` passed as
+  array arg, never interpolated (06 T1). Read-only lint only,
+  never `fix --apply`. `trajlens` pinned to 0.3.0.
+- SARIF 2.1.0 schema-validation test in `tests/unit/test_sarif.py`
+- Exit-code regression guard: 0=PASS, 1=WARN, 2=FAIL
+- `docs/github-action.md` with copy-pasteable workflow snippet
+- `jsonschema` added to dev dependencies for SARIF validation
+
 ## [0.3.0] - 2026-07-21
 
 ### Added
