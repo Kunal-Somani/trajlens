@@ -8,9 +8,9 @@ ruff for robot data — lint, fix, and generate clean LeRobotDataset datasets.
 
 ## Status
 
-v0.3.0, under active development.
+v0.4.0, under active development.
 
-`lint` is implemented and audited against the public Hub (see [Real-world audit](#real-world-audit-of-the-hub) below). `fix` (repair engine: timestamp drift, stats recomputation, episode reindexing, task-index repair, video/info.json fps sync, orphan-shard reporting) and `web` (read-only local dashboard, now with a per-episode findings view) both ship, with `lint --share` for redacted issue-report sharing.
+`lint` is implemented and audited against the public Hub (see [Real-world audit](#real-world-audit-of-the-hub) below). `fix` (repair engine: timestamp drift, stats recomputation, episode reindexing, task-index repair, video/info.json fps sync, orphan-shard reporting) and `web` (read-only local dashboard, with a per-episode findings view) both ship, with `lint --share` for redacted issue-report sharing, `lint --baseline`/`--update-baseline` for CI adoption on existing datasets, `lint --parallel <n>` for multi-process scanning, and `trajlens watch` for live linting during recording.
 
 ## Install
 
@@ -40,6 +40,10 @@ trajlens lint <path-or-org/dataset> --sarif out.sarif   # SARIF 2.1.0, for CI an
 trajlens lint <path-or-org/dataset> --deep   # also decode video and verify per-frame stats
 trajlens lint <path-or-org/dataset> --share  # redacted summary, for pasting into a GitHub issue
 trajlens lint <path-or-org/dataset> --share --share-out out.json  # write it to a file instead
+trajlens lint <path-or-org/dataset> --parallel 4   # run thread-safe checks across worker processes
+trajlens lint <local-path> --baseline .trajlens-baseline.json          # suppress already-known findings
+trajlens lint <local-path> --update-baseline .trajlens-baseline.json  # (re)generate the baseline file
+trajlens watch <local-path>   # live lint as episode shards are written during recording
 ```
 
 Exit codes follow lint-tool convention: `0` = clean, `1` = WARN present, `2` = FAIL or load ERROR — so `trajlens lint` composes directly into CI gates.
