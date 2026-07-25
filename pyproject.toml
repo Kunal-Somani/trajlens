@@ -87,6 +87,10 @@ Issues = "https://github.com/yourusername/trajlens/issues"
 [tool.hatch.build.targets.wheel]
 packages = ["src/trajlens"]
 
+[tool.hatch.build.targets.wheel.force-include]
+"docs/github-action.md" = "trajlens/docs/github-action.md"
+"docs/performance.md" = "trajlens/docs/performance.md"
+
 [tool.hatch.build.targets.sdist]
 include = ["src/", "tests/", "README.md", "LICENSE", "CHANGELOG.md"]
 
