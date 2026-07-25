@@ -421,3 +421,45 @@ def web(
     except DatasetError as exc:
         typer.echo(f"ERROR: Could not load dataset {ref!r}: {exc}", err=True)
         raise typer.Exit(code=2) from exc
+
+
+@app.command()
+def watch(
+    ref: Annotated[
+        str,
+        typer.Argument(
+            help=(
+                "Local path to a dataset directory being recorded. Hub refs are "
+                "not supported — Hub is immutable post-upload."
+            )
+        ),
+    ],
+    deep: Annotated[
+        bool,
+        typer.Option("--deep", help="Include video checks in each episode lint (slower)."),
+    ] = False,
+) -> None:
+    """Lint episodes incrementally as a recording rig writes them. Exits cleanly on Ctrl-C."""
+    from pathlib import Path
+
+    from rich.console import Console
+
+    from trajlens.watch import Watcher
+
+    parts = ref.split("/")
+    if not ref.startswith("/") and len(parts) == 2 and all(parts):
+        typer.echo(
+            f"ERROR: {ref!r} looks like a Hugging Face Hub ref, which watch does not "
+            f"support — Hub is immutable post-upload. Pass a local dataset directory.",
+            err=True,
+        )
+        raise typer.Exit(code=2)
+
+    local_path = Path(ref)
+    if not local_path.exists() or not local_path.is_dir():
+        typer.echo(f"ERROR: {ref!r} is not an existing local directory.", err=True)
+        raise typer.Exit(code=2)
+
+    console = Console()
+    watcher = Watcher(local_path, deep=deep)
+    watcher.run(console)

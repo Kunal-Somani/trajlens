@@ -24,3 +24,4 @@ repos:
           - numpy>=1.26,<3
           - fastapi>=0.110,<1
           - uvicorn>=0.29,<1
+          - watchfiles>=0.22,<2
