@@ -1470,6 +1470,93 @@ def build_v3_all_zero_action(root: Path, *, camera: str = "top") -> None:
     pq.write_table(new, data_path)
 
 
+def build_large_synthetic_dataset(
+    root: Path,
+    *,
+    num_episodes: int,
+    rows_per_episode: int,
+    camera: str = "top",
+    fps: int = 30,
+) -> None:
+    """Build a valid v3.0 dataset at perf-test scale (tests/perf/, pytest -m perf).
+
+    Same v3.0 shape as build_v3_dataset, but rows_per_episode is independent
+    of the fixed FRAMES_PER_EPISODE constant so callers can size the dataset
+    for a specific total row count (num_episodes * rows_per_episode). All
+    episodes land in a single data/video shard, matching the common
+    large-dataset layout the O(1)-memory guarantee is meant to hold for.
+    """
+    total_frames = num_episodes * rows_per_episode
+    info = {
+        "codebase_version": "v3.0",
+        "fps": fps,
+        "features": {**DEFAULT_FEATURES, **_video_feature(camera)},
+        "total_episodes": num_episodes,
+        "total_frames": total_frames,
+    }
+    (root / "meta").mkdir(parents=True, exist_ok=True)
+    (root / "meta" / "info.json").write_text(json.dumps(info))
+
+    timestamps, frame_idx, ep_idx, idx, task_idx = [], [], [], [], []
+    frame = 0
+    for ep in range(num_episodes):
+        for f in range(rows_per_episode):
+            timestamps.append(f / fps)
+            frame_idx.append(f)
+            ep_idx.append(ep)
+            idx.append(frame)
+            task_idx.append(0)
+            frame += 1
+    frames_table = pa.table(
+        {
+            "timestamp": pa.array(timestamps, type=pa.float32()),
+            "frame_index": pa.array(frame_idx, type=pa.int64()),
+            "episode_index": pa.array(ep_idx, type=pa.int64()),
+            "index": pa.array(idx, type=pa.int64()),
+            "task_index": pa.array(task_idx, type=pa.int64()),
+        }
+    )
+
+    data_dir = root / "data" / "chunk-000"
+    data_dir.mkdir(parents=True, exist_ok=True)
+    pq.write_table(frames_table, data_dir / "file-000.parquet")
+
+    episode_rows: list[dict[str, Any]] = []
+    for ep in range(num_episodes):
+        from_idx = ep * rows_per_episode
+        episode_rows.append(
+            {
+                "episode_index": ep,
+                "tasks": [DEFAULT_TASK],
+                "length": rows_per_episode,
+                "data/chunk_index": 0,
+                "data/file_index": 0,
+                "dataset_from_index": from_idx,
+                "dataset_to_index": from_idx + rows_per_episode,
+                "meta/episodes/chunk_index": 0,
+                "meta/episodes/file_index": 0,
+                f"videos/{camera}/chunk_index": 0,
+                f"videos/{camera}/file_index": 0,
+                f"videos/{camera}/from_timestamp": from_idx / fps,
+                f"videos/{camera}/to_timestamp": (from_idx + rows_per_episode) / fps,
+            }
+        )
+
+    episodes_dir = root / "meta" / "episodes" / "chunk-000"
+    episodes_dir.mkdir(parents=True, exist_ok=True)
+    columns = {key: [row[key] for row in episode_rows] for key in episode_rows[0]}
+    pq.write_table(pa.table(columns), episodes_dir / "file-000.parquet")
+
+    tasks_table = pa.table(
+        {"task_index": pa.array([0], type=pa.int64()), "task": pa.array([DEFAULT_TASK])}
+    )
+    pq.write_table(tasks_table, root / "meta" / "tasks.parquet")
+
+    video_dir = root / "videos" / camera / "chunk-000"
+    video_dir.mkdir(parents=True, exist_ok=True)
+    (video_dir / "file-000.mp4").write_bytes(b"\x00")
+
+
 def build_v3_varying_action(root: Path, *, camera: str = "top") -> None:
     """Build a v3.0 dataset where 'action' varies sensibly across frames.
 

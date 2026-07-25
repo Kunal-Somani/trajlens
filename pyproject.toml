@@ -160,6 +160,7 @@ addopts = [
 markers = [
     "integration: marks tests that hit real network (deselect with -m 'not integration')",
     "slow: marks tests that are computationally heavy",
+    "perf: marks performance tests requiring the large fixture (deselect with -m 'not perf')",
 ]
 
 [tool.coverage.run]

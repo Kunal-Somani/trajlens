@@ -28,4 +28,4 @@ else
     exit 1
 fi
 
-PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 exec "${PYTEST_BIN}" -p pytest_cov "$@"
+PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 exec "${PYTEST_BIN}" -p pytest_cov -m "not perf" "$@"
