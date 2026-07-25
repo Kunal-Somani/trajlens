@@ -36,9 +36,11 @@
     <tbody id="results-body"></tbody>
   </table>
 
+  <button type="button" id="episodes-toggle" class="hidden">Show per-episode breakdown</button>
   <div id="episodes-section" class="hidden">
     <h2 id="episodes-heading">Worst episodes</h2>
-    <table>
+    <p id="episodes-empty" class="hidden">No per-episode data available</p>
+    <table id="episodes-table">
       <tr><th>Episode</th><th>Trust contribution</th><th>Findings</th><th>By check</th></tr>
       <tbody id="episodes-body"></tbody>
     </table>
