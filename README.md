@@ -75,6 +75,18 @@ trajlens web <path-or-org/dataset>
 
 Lints the dataset once and serves a read-only local dashboard over the result (binds to `127.0.0.1` only, no flag to widen the bind). It's a thin FastAPI shell over the same report the terminal/JSON renderers use — no separate lint logic, no writes, no route that accepts a path/ref/dataset id from the browser.
 
+## CI integration
+
+Lint datasets automatically on push or PR using the bundled GitHub Action:
+
+```yaml
+- uses: Kunal-Somani/trajlens/.github/actions/lint@v0.4.0
+  with:
+    dataset-ref: path/to/your/dataset
+```
+
+See [docs/github-action.md](docs/github-action.md) for the full input/output reference and a complete workflow example.
+
 ## Found something?
 
 Run `trajlens lint <path-or-org/dataset> --share` and paste the output into one of the issue forms below. False positives are the most valuable report you can file — if a check flagged something that isn't actually wrong, [tell us](.github/ISSUE_TEMPLATE/false_positive.yml). There's also a form for [bugs](.github/ISSUE_TEMPLATE/bug_report.yml) and one for [new corruption classes](.github/ISSUE_TEMPLATE/new_corruption_class.yml) trajlens doesn't check for yet.

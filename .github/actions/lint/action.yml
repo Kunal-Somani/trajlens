@@ -1,0 +1,43 @@
+name: "trajlens lint"
+description: "Lint a LeRobot dataset and surface findings as SARIF"
+branding:
+  icon: "shield"
+  color: "blue"
+
+inputs:
+  dataset-ref:
+    required: true
+    description: "Local path or Hub id to lint (e.g. org/dataset-name)"
+  deep:
+    required: false
+    default: "false"
+    description: "Run expensive video checks"
+  fail-on:
+    required: false
+    default: "fail"
+    description: "Minimum severity that sets a failure conclusion (fail|warn)"
+  sarif-output:
+    required: false
+    default: "trajlens.sarif"
+    description: "Path to write SARIF output"
+
+outputs:
+  grade:
+    description: "Lint grade (PASS/WARN/FAIL/ERROR)"
+  trust-score:
+    description: "Numeric trust score 0-100"
+  sarif-file:
+    description: "Path to the written SARIF file"
+
+runs:
+  using: "composite"
+  steps:
+    - name: "Run trajlens lint"
+      shell: bash
+      run: |
+        .github/actions/lint/entrypoint.sh
+      env:
+        INPUT_DATASET_REF: ${{ inputs.dataset-ref }}
+        INPUT_DEEP: ${{ inputs.deep }}
+        INPUT_FAIL_ON: ${{ inputs.fail-on }}
+        INPUT_SARIF_OUTPUT: ${{ inputs.sarif-output }}
