@@ -101,6 +101,12 @@ class Check(Protocol):
     severity      — the Severity that will be emitted on a failure finding.
     category      — the top-level category string ("STRUCTURAL", "TEMPORAL", etc.).
     requires_video — if True the engine will skip this check when no video is present.
+    thread_safe   — if True (default) the check may run in a ProcessPoolExecutor
+                     worker under --parallel (v0.4 T3). False forces the engine's
+                     serial fallback regardless of --parallel; every built-in check
+                     is thread_safe=True (each holds no shared mutable state — all
+                     accumulation is local to run(), and the registry is read-only
+                     after import).
 
     run() must return a CheckResult.  It must never raise; catch everything
     internally and return a CheckResult(severity=ERROR, ...) per ADR-003.
@@ -110,5 +116,6 @@ class Check(Protocol):
     severity: Severity
     category: str
     requires_video: bool
+    thread_safe: bool
 
     def run(self, ds: CanonicalDataset, ctx: CheckContext) -> CheckResult: ...

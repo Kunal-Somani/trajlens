@@ -85,6 +85,7 @@ class _DecodableSpotcheckCheck:
     severity = Severity.FAIL
     category = "VIDEO"
     requires_video = True
+    thread_safe = True
 
     def run(self, ds: CanonicalDataset, ctx: CheckContext) -> CheckResult:
         failures: list[str] = []
