@@ -38,6 +38,24 @@ class SourceHandle:
         default_factory=dict, init=False, repr=False
     )
 
+    def __getstate__(self) -> dict[str, object]:
+        # pyarrow's ParquetFile has no __reduce__ (non-trivial __cinit__), so
+        # the memoized cache can never cross a pickle boundary -- required
+        # for CanonicalDataset (which embeds this handle via its resolver) to
+        # be sendable to a ProcessPoolExecutor worker under --parallel (v0.4
+        # T3). The cache is a same-process perf optimization only, never
+        # semantic state: a worker that unpickles this handle starts with an
+        # empty cache and reopens shards on first access, which is correct
+        # and matches the parallel path's worker-isolation requirement (no
+        # shared mutable state between workers).
+        state = {f: getattr(self, f) for f in self.__slots__ if f != "_parquet_cache"}
+        state["_parquet_cache"] = {}
+        return state
+
+    def __setstate__(self, state: dict[str, object]) -> None:
+        for key, value in state.items():
+            object.__setattr__(self, key, value)
+
     def parquet_shard(self, *relative_parts: str) -> pq.ParquetFile:
         """Open a Parquet shard by path relative to the dataset root, safely joined."""
         if relative_parts in self._parquet_cache:

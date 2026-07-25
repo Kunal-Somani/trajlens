@@ -64,6 +64,9 @@ unbounded one.
 
 from __future__ import annotations
 
+import os
+from concurrent.futures import ProcessPoolExecutor
+
 import structlog
 
 from trajlens.checks.protocol import Check, CheckContext, CheckResult, Severity
@@ -100,6 +103,25 @@ _DATA_READING_CHECK_IDS: frozenset[str] = frozenset(
 )
 
 
+def _run_check_in_worker(check: Check, ds: CanonicalDataset, ctx: CheckContext) -> CheckResult:
+    """Run one check in a ProcessPoolExecutor worker, converting exceptions to ERROR.
+
+    Module-level so it is picklable as the executor.submit target. Mirrors
+    CheckEngine._run_one's ADR-003 handling: a worker exception must never
+    abort the run or surface as a bare traceback, and must never produce PASS.
+    """
+    try:
+        return check.run(ds, ctx)
+    except Exception as exc:
+        exc_type = type(exc).__name__
+        return CheckResult(
+            check_id=check.id,
+            severity=Severity.ERROR,
+            message=f"check raised unhandled exception in worker: {exc_type}: {exc}",
+            details={"exc_type": exc_type, "exc_message": str(exc)},
+        )
+
+
 def _oversized_shard_rows(ds: CanonicalDataset) -> int | None:
     """Return the row count of the first shard exceeding _MAX_SHARD_ROWS, if any.
 
@@ -134,12 +156,25 @@ class CheckEngine:
     def __init__(self, reg: CheckRegistry) -> None:
         self._registry = reg
 
-    def run(self, ds: CanonicalDataset, ctx: CheckContext) -> list[CheckResult]:
-        """Run all applicable checks; return one CheckResult per check."""
-        results: list[CheckResult] = []
+    def run(
+        self, ds: CanonicalDataset, ctx: CheckContext, *, parallel: int = 1
+    ) -> list[CheckResult]:
+        """Run all applicable checks; return one CheckResult per check.
+
+        parallel: number of worker processes. 1 (default) is fully serial and
+        behaves exactly as before this option existed. Values >1 run
+        thread_safe checks in a ProcessPoolExecutor with
+        min(parallel, os.cpu_count() or 1) workers; checks declaring
+        thread_safe=False always run in the serial fallback regardless of
+        this value. Result order matches registration order in both modes
+        (the determinism invariant: serial and parallel produce identical
+        CheckResult sets).
+        """
         has_video = len(ds.cameras) > 0
         oversized_rows = _oversized_shard_rows(ds)
 
+        runnable: list[Check] = []
+        results: list[CheckResult | None] = []
         for check in self._registry.all_checks():
             if check.requires_video and not has_video:
                 log.debug("check.skipped.no_video", check_id=check.id)
@@ -155,25 +190,71 @@ class CheckEngine:
                         f"allocation bomb"
                     ),
                 )
-                results.append(result)
                 log.error(
                     "check.skipped.oversized_shard",
                     check_id=check.id,
                     shard_rows=oversized_rows,
                     max_shard_rows=_MAX_SHARD_ROWS,
                 )
+                results.append(result)
                 continue
 
-            result = self._run_one(check, ds, ctx)
-            results.append(result)
+            runnable.append(check)
+            results.append(None)
+
+        if parallel > 1:
+            self._run_parallel(runnable, ds, ctx, results, parallel=parallel)
+        else:
+            for i, check in enumerate(runnable):
+                results[i] = self._run_one(check, ds, ctx)
+
+        final_results: list[CheckResult] = []
+        for maybe_result in results:
+            if maybe_result is None:
+                raise AssertionError("check result slot was not filled by any run branch")
+            final_results.append(maybe_result)
             log.info(
                 "check.result",
-                check_id=result.check_id,
-                severity=result.severity.value,
-                message=result.message,
+                check_id=maybe_result.check_id,
+                severity=maybe_result.severity.value,
+                message=maybe_result.message,
             )
 
-        return results
+        return final_results
+
+    def _run_parallel(
+        self,
+        runnable: list[Check],
+        ds: CanonicalDataset,
+        ctx: CheckContext,
+        results: list[CheckResult | None],
+        *,
+        parallel: int,
+    ) -> None:
+        """Fill *results* in place: thread_safe checks in worker processes, others serial.
+
+        Indices into *results* line up with *runnable* by position among the
+        subset each branch handles, tracked via parallel_indices/serial_indices
+        below so result order matches registration order regardless of which
+        branch a given check took.
+        """
+        worker_count = min(parallel, os.cpu_count() or 1)
+        parallel_indices = [i for i, c in enumerate(runnable) if c.thread_safe]
+        serial_indices = [i for i, c in enumerate(runnable) if not c.thread_safe]
+
+        for i in serial_indices:
+            results[i] = self._run_one(runnable[i], ds, ctx)
+
+        if not parallel_indices:
+            return
+
+        with ProcessPoolExecutor(max_workers=worker_count) as executor:
+            futures = {
+                executor.submit(_run_check_in_worker, runnable[i], ds, ctx): i
+                for i in parallel_indices
+            }
+            for future, i in futures.items():
+                results[i] = future.result()
 
     def _run_one(self, check: Check, ds: CanonicalDataset, ctx: CheckContext) -> CheckResult:
         """Run a single check, converting any exception to an ERROR result (ADR-003)."""
