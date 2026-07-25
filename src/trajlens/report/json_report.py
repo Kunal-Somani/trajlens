@@ -31,6 +31,11 @@ Schema:
         },
         ...  # up to 5, worst first
       ]
+    },
+    "baseline": {  # present only when --baseline was used
+      "new": [ ... ],       # same shape as "results" entries
+      "resolved": [{"check_id": str, "episode_index": int | None, "shard_path": str | None}, ...],
+      "unchanged": [ ... ]  # same shape as "results" entries
     }
   }
 
@@ -44,6 +49,7 @@ from __future__ import annotations
 
 import json
 
+from trajlens.baseline import BaselineDiff
 from trajlens.checks.protocol import CheckResult, Severity
 from trajlens.report.episodes import worst_episodes
 from trajlens.report.trust_score import SCORE_FORMULA_VERSION, compute_trust_score
@@ -60,29 +66,37 @@ def _grade(worst: Severity) -> str:
     return "PASS"
 
 
+def _result_entry(r: CheckResult) -> dict[str, object]:
+    entry: dict[str, object] = {
+        "check_id": r.check_id,
+        "severity": r.severity.value,
+        "category": r.check_id.split(".")[0],
+        "message": r.message,
+        "details": r.details,
+    }
+    if r.per_episode is not None:
+        entry["per_episode"] = {str(k): v for k, v in r.per_episode.items()}
+    return entry
+
+
 def render_json(
     ref: str,
     version: DatasetVersion,
     num_episodes: int,
     num_frames: int | None,
     results: list[CheckResult],
+    *,
+    baseline_diff: BaselineDiff | None = None,
 ) -> str:
-    """Return a JSON string representing the lint report."""
+    """Return a JSON string representing the lint report.
+
+    When baseline_diff is given, adds a top-level "baseline" key with
+    "new"/"resolved"/"unchanged" lists (additive; all other keys unchanged).
+    """
     worst = max((r.severity for r in results), default=Severity.INFO)
     score = compute_trust_score(results)
 
-    result_entries: list[dict[str, object]] = []
-    for r in results:
-        entry: dict[str, object] = {
-            "check_id": r.check_id,
-            "severity": r.severity.value,
-            "category": r.check_id.split(".")[0],
-            "message": r.message,
-            "details": r.details,
-        }
-        if r.per_episode is not None:
-            entry["per_episode"] = {str(k): v for k, v in r.per_episode.items()}
-        result_entries.append(entry)
+    result_entries = [_result_entry(r) for r in results]
 
     payload: dict[str, object] = {
         "ref": ref,
@@ -107,6 +121,20 @@ def render_json(
                 }
                 for e in worst_eps
             ]
+        }
+
+    if baseline_diff is not None:
+        payload["baseline"] = {
+            "new": [_result_entry(r) for r in baseline_diff.new],
+            "resolved": [
+                {
+                    "check_id": f.check_id,
+                    "episode_index": f.episode_index,
+                    "shard_path": f.shard_path,
+                }
+                for f in baseline_diff.resolved
+            ],
+            "unchanged": [_result_entry(r) for r in baseline_diff.unchanged],
         }
 
     return json.dumps(payload, indent=2)
