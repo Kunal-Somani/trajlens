@@ -173,7 +173,11 @@ class CheckEngine:
         has_video = len(ds.cameras) > 0
         oversized_rows = _oversized_shard_rows(ds)
 
-        runnable: list[Check] = []
+        # runnable holds (result-slot index, check) pairs so the serial and
+        # parallel branches below write back to the correct position in
+        # results even though skipped checks (no-video, oversized-shard)
+        # occupy slots in between runnable entries.
+        runnable: list[tuple[int, Check]] = []
         results: list[CheckResult | None] = []
         for check in self._registry.all_checks():
             if check.requires_video and not has_video:
@@ -199,13 +203,13 @@ class CheckEngine:
                 results.append(result)
                 continue
 
-            runnable.append(check)
             results.append(None)
+            runnable.append((len(results) - 1, check))
 
         if parallel > 1:
             self._run_parallel(runnable, ds, ctx, results, parallel=parallel)
         else:
-            for i, check in enumerate(runnable):
+            for i, check in runnable:
                 results[i] = self._run_one(check, ds, ctx)
 
         final_results: list[CheckResult] = []
@@ -224,7 +228,7 @@ class CheckEngine:
 
     def _run_parallel(
         self,
-        runnable: list[Check],
+        runnable: list[tuple[int, Check]],
         ds: CanonicalDataset,
         ctx: CheckContext,
         results: list[CheckResult | None],
@@ -233,25 +237,25 @@ class CheckEngine:
     ) -> None:
         """Fill *results* in place: thread_safe checks in worker processes, others serial.
 
-        Indices into *results* line up with *runnable* by position among the
-        subset each branch handles, tracked via parallel_indices/serial_indices
-        below so result order matches registration order regardless of which
-        branch a given check took.
+        Each entry in *runnable* is (result-slot index, check); the index is
+        threaded through explicitly so writes land in the correct slot
+        regardless of how many other checks were skipped (no-video,
+        oversized-shard) ahead of a given entry.
         """
         worker_count = min(parallel, os.cpu_count() or 1)
-        parallel_indices = [i for i, c in enumerate(runnable) if c.thread_safe]
-        serial_indices = [i for i, c in enumerate(runnable) if not c.thread_safe]
+        parallel_entries = [(i, c) for i, c in runnable if c.thread_safe]
+        serial_entries = [(i, c) for i, c in runnable if not c.thread_safe]
 
-        for i in serial_indices:
-            results[i] = self._run_one(runnable[i], ds, ctx)
+        for i, check in serial_entries:
+            results[i] = self._run_one(check, ds, ctx)
 
-        if not parallel_indices:
+        if not parallel_entries:
             return
 
         with ProcessPoolExecutor(max_workers=worker_count) as executor:
             futures = {
-                executor.submit(_run_check_in_worker, runnable[i], ds, ctx): i
-                for i in parallel_indices
+                executor.submit(_run_check_in_worker, check, ds, ctx): i
+                for i, check in parallel_entries
             }
             for future, i in futures.items():
                 results[i] = future.result()
