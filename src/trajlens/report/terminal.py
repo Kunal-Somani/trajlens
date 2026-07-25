@@ -11,6 +11,7 @@ from rich.console import Console
 from rich.table import Table
 from rich.text import Text
 
+from trajlens.baseline import BaselineDiff
 from trajlens.checks.protocol import CheckResult, Severity
 from trajlens.report.trust_score import SCORE_FORMULA_VERSION, compute_trust_score
 from trajlens.sources.version import DatasetVersion
@@ -45,6 +46,29 @@ def _grade(worst: Severity) -> tuple[str, str]:
     return "PASS", "bold green"
 
 
+def _render_baseline_findings(con: Console, diff: BaselineDiff, *, show_unchanged: bool) -> None:
+    for result in diff.new:
+        label = _severity_label(result.severity)
+        con.print(
+            f"  [red][NEW][/red]  [{_severity_style(result.severity)}]{label}[/] {result.check_id}"
+        )
+        con.print(f"           {result.message}")
+    for finding in diff.resolved:
+        con.print(f"  [green][RESOLVED][/green]  {finding.check_id}")
+    if show_unchanged:
+        for result in diff.unchanged:
+            label = _severity_label(result.severity)
+            style = _severity_style(result.severity)
+            con.print(f"  [UNCHANGED]  [{style}]{label}[/{style}] {result.check_id}")
+            con.print(f"           {result.message}")
+    con.print()
+    con.print(
+        f"  baseline: {len(diff.new)} new, {len(diff.resolved)} resolved, "
+        f"{len(diff.unchanged)} unchanged"
+    )
+    con.print()
+
+
 def render_terminal(
     ref: str,
     version: DatasetVersion,
@@ -53,8 +77,15 @@ def render_terminal(
     results: list[CheckResult],
     *,
     console: Console | None = None,
+    baseline_diff: BaselineDiff | None = None,
+    show_unchanged: bool = False,
 ) -> None:
-    """Print a color-coded lint report to the terminal."""
+    """Print a color-coded lint report to the terminal.
+
+    When baseline_diff is given, each result is prefixed with [NEW]
+    (red), [RESOLVED] (green), or [UNCHANGED] (suppressed unless
+    show_unchanged) instead of the plain per-finding listing.
+    """
     con = console or Console()
 
     con.print()
@@ -65,7 +96,9 @@ def render_terminal(
     con.print(f"  frames   : {frames_str}")
     con.print()
 
-    if results:
+    if baseline_diff is not None:
+        _render_baseline_findings(con, baseline_diff, show_unchanged=show_unchanged)
+    elif results:
         for result in results:
             style = _severity_style(result.severity)
             label = _severity_label(result.severity)

@@ -83,14 +83,39 @@ def lint(
             "--share-out", help="Write the --share summary to this path instead of stdout."
         ),
     ] = None,
+    baseline: Annotated[
+        str | None,
+        typer.Option(
+            "--baseline",
+            help=(
+                "Compare results against this baseline file; exit code is "
+                "driven by new findings only."
+            ),
+        ),
+    ] = None,
+    update_baseline: Annotated[
+        str | None,
+        typer.Option(
+            "--update-baseline",
+            help="Write current results to this baseline file and exit 0.",
+        ),
+    ] = None,
+    show_unchanged: Annotated[
+        bool,
+        typer.Option(
+            "--show-unchanged",
+            help="With --baseline, also show unchanged findings (suppressed by default).",
+        ),
+    ] = False,
 ) -> None:
     """Validate a LeRobotDataset and report its quality grade."""
     import sys
     from pathlib import Path
 
+    from trajlens.baseline import BaselineStore
     from trajlens.checks import CheckContext, CheckEngine, Severity, registry
     from trajlens.checks.protocol import CheckResult
-    from trajlens.errors import DatasetError
+    from trajlens.errors import DatasetError, DatasetFormatError
     from trajlens.model import build_canonical_dataset
     from trajlens.report import (
         render_html,
@@ -101,6 +126,10 @@ def lint(
         render_terminal,
     )
     from trajlens.sources.loader import SourceLoader
+
+    if show_unchanged and baseline is None:
+        typer.echo("ERROR: --show-unchanged requires --baseline.", err=True)
+        raise typer.Exit(code=2)
 
     try:
         handle = SourceLoader().resolve(ref)
@@ -116,12 +145,51 @@ def lint(
     engine = CheckEngine(registry)
     results: list[CheckResult] = engine.run(ds, ctx)
 
-    worst = max((r.severity for r in results), default=Severity.INFO)
+    if update_baseline is not None:
+        BaselineStore.from_results(results).save(Path(update_baseline))
+
+    baseline_diff = None
+    if baseline is not None:
+        try:
+            store = BaselineStore.load(Path(baseline))
+        except DatasetFormatError as exc:
+            if json_output:
+                typer.echo(render_json_load_error(ref, type(exc).__name__, str(exc)))
+            else:
+                typer.echo(f"ERROR: Could not load baseline {baseline!r}: {exc}", err=True)
+            raise typer.Exit(code=2) from exc
+        baseline_diff = store.diff(results)
+
+    worst = (
+        max((r.severity for r in baseline_diff.new), default=Severity.INFO)
+        if baseline_diff is not None
+        else max((r.severity for r in results), default=Severity.INFO)
+    )
 
     if json_output:
-        typer.echo(render_json(ref, ds.version, ds.num_episodes, ds.num_frames, results))
+        typer.echo(
+            render_json(
+                ref,
+                ds.version,
+                ds.num_episodes,
+                ds.num_frames,
+                results,
+                baseline_diff=baseline_diff,
+            )
+        )
     else:
-        render_terminal(ref, ds.version, ds.num_episodes, ds.num_frames, results)
+        render_terminal(
+            ref,
+            ds.version,
+            ds.num_episodes,
+            ds.num_frames,
+            results,
+            baseline_diff=baseline_diff,
+            show_unchanged=show_unchanged,
+        )
+
+    if update_baseline is not None:
+        sys.exit(0)
 
     if report is not None:
         html = render_html(ref, ds.version, ds.num_episodes, ds.num_frames, results)
