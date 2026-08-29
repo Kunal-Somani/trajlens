@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "trajlens"
-version = "0.4.0"
+version = "0.4.1"
 description = "The quality and synthesis layer for the open robot-learning data ecosystem."
 readme = "README.md"
 license = { text = "Apache-2.0" }
@@ -80,9 +80,9 @@ dev = [
 trajlens = "trajlens.cli:app"
 
 [project.urls]
-Homepage = "https://github.com/yourusername/trajlens"
-Repository = "https://github.com/yourusername/trajlens"
-Issues = "https://github.com/yourusername/trajlens/issues"
+Homepage = "https://github.com/Kunal-Somani/trajlens"
+Repository = "https://github.com/Kunal-Somani/trajlens"
+Issues = "https://github.com/Kunal-Somani/trajlens/issues"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/trajlens"]
@@ -172,7 +172,7 @@ markers = [
 
 [tool.coverage.run]
 source = ["src/trajlens"]
-omit = ["src/trajlens/synth/*"]  # synth is v0.3; not in scope for coverage gate now
+omit = ["src/trajlens/synth/*"]  # synth is v0.8; not in scope for coverage gate now
 
 [tool.coverage.report]
 exclude_lines = [

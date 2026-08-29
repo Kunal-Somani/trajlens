@@ -38,6 +38,11 @@ class TestSarifSchemaValidation:
         doc = json.loads(render_sarif("test/ref", _VER, 1, 10, []))
         jsonschema.validate(instance=doc, schema=schema)
 
+    def test_driver_information_uri_points_to_real_repo(self) -> None:
+        doc = json.loads(render_sarif("test/ref", _VER, 1, 10, []))
+        driver = doc["runs"][0]["tool"]["driver"]
+        assert driver["informationUri"] == "https://github.com/Kunal-Somani/trajlens"
+
     def test_mixed_severity_results_validate_against_sarif_schema(self) -> None:
         schema = json.loads(_SCHEMA_PATH.read_text())
         results = [
