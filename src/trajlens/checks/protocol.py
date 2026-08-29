@@ -12,6 +12,17 @@ from dataclasses import dataclass, field
 from typing import Protocol, runtime_checkable
 
 
+class Tier(enum.StrEnum):
+    """Whether a check's findings count toward the integrity score (ADR-011).
+
+    INTEGRITY — findings affect the trust score and grade.
+    QUALITY   — advisory findings; never affect the trust score or grade.
+    """
+
+    INTEGRITY = "INTEGRITY"
+    QUALITY = "QUALITY"
+
+
 class Severity(enum.StrEnum):
     """Categorical outcome level for a single check result.
 
@@ -78,6 +89,11 @@ class CheckResult:
     per_episode  — optional map of episode_index -> finding detail string, for checks
                    that have per-episode granularity internally. Absent (None) means the
                    check does not support per-episode attribution, never an empty dict.
+    tier         — the producing check's Tier (ADR-011). Defaults to INTEGRITY because
+                   every check module constructs CheckResult without naming this field;
+                   CheckEngine.run() overwrites it with the actual check.tier after run()
+                   returns, so this default is only ever observed for a result built
+                   outside the engine (e.g. calling a Check.run() directly in a test).
     """
 
     check_id: str
@@ -85,6 +101,7 @@ class CheckResult:
     message: str
     details: dict[str, object] = field(default_factory=dict)
     per_episode: dict[int, str] | None = None
+    tier: Tier = Tier.INTEGRITY
 
 
 # Import after Severity/CheckResult/CheckContext are defined to avoid a
@@ -107,6 +124,11 @@ class Check(Protocol):
                      is thread_safe=True (each holds no shared mutable state — all
                      accumulation is local to run(), and the registry is read-only
                      after import).
+    tier          — INTEGRITY or QUALITY (ADR-011). QUALITY findings are advisory
+                     and must never affect the trust score or grade.
+    formats       — None means the check runs on any format that can populate the
+                     fields it needs. A non-None frozenset restricts the check to
+                     ds.format_id values in that set (e.g. {"lerobot"}, {"rlds"}).
 
     run() must return a CheckResult.  It must never raise; catch everything
     internally and return a CheckResult(severity=ERROR, ...) per ADR-003.
@@ -117,5 +139,7 @@ class Check(Protocol):
     category: str
     requires_video: bool
     thread_safe: bool
+    tier: Tier
+    formats: frozenset[str] | None
 
     def run(self, ds: CanonicalDataset, ctx: CheckContext) -> CheckResult: ...

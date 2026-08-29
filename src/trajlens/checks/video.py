@@ -18,7 +18,7 @@ from __future__ import annotations
 import av
 import structlog
 
-from trajlens.checks.protocol import Check, CheckContext, CheckResult, Severity
+from trajlens.checks.protocol import Check, CheckContext, CheckResult, Severity, Tier
 from trajlens.checks.registry import registry
 from trajlens.model.canonical import CanonicalDataset
 
@@ -86,6 +86,8 @@ class _DecodableSpotcheckCheck:
     category = "VIDEO"
     requires_video = True
     thread_safe = True
+    tier: Tier = Tier.INTEGRITY
+    formats: frozenset[str] | None = None
 
     def run(self, ds: CanonicalDataset, ctx: CheckContext) -> CheckResult:
         failures: list[str] = []

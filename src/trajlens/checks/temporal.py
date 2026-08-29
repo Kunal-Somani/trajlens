@@ -34,7 +34,7 @@ from __future__ import annotations
 import numpy as np
 import structlog
 
-from trajlens.checks.protocol import Check, CheckContext, CheckResult, Severity
+from trajlens.checks.protocol import Check, CheckContext, CheckResult, Severity, Tier
 from trajlens.checks.registry import registry
 from trajlens.checks.utils import ShardColumnCache
 from trajlens.model.canonical import CanonicalDataset
@@ -62,6 +62,8 @@ class _TimestampMonotonicCheck:
     category = "TEMPORAL"
     requires_video = False
     thread_safe = True
+    tier: Tier = Tier.INTEGRITY
+    formats: frozenset[str] | None = None
 
     def run(self, ds: CanonicalDataset, ctx: CheckContext) -> CheckResult:
         violations: list[str] = []
@@ -120,6 +122,8 @@ class _TimestampSpacingCheck:
     category = "TEMPORAL"
     requires_video = False
     thread_safe = True
+    tier: Tier = Tier.INTEGRITY
+    formats: frozenset[str] | None = None
 
     def run(self, ds: CanonicalDataset, ctx: CheckContext) -> CheckResult:
         ideal_spacing = 1.0 / ds.fps
@@ -209,6 +213,8 @@ class _TimestampDriftCheck:
     category = "KNOWNBUG"
     requires_video = False
     thread_safe = True
+    tier: Tier = Tier.INTEGRITY
+    formats: frozenset[str] | None = None
 
     def run(self, ds: CanonicalDataset, ctx: CheckContext) -> CheckResult:
         if "frame_index" not in ds.features:

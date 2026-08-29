@@ -18,8 +18,8 @@ import trajlens.checks.statistical
 import trajlens.checks.structural
 import trajlens.checks.temporal
 import trajlens.checks.video  # noqa: F401
-from trajlens.checks.engine import CheckEngine
-from trajlens.checks.protocol import Check, CheckContext, CheckResult, Severity
+from trajlens.checks.engine import CheckEngine, EngineResult
+from trajlens.checks.protocol import Check, CheckContext, CheckResult, Severity, Tier
 from trajlens.checks.registry import CheckRegistry, registry
 
 __all__ = [
@@ -28,6 +28,8 @@ __all__ = [
     "CheckEngine",
     "CheckRegistry",
     "CheckResult",
+    "EngineResult",
     "Severity",
+    "Tier",
     "registry",
 ]

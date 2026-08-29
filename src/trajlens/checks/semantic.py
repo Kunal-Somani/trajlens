@@ -41,7 +41,7 @@ from __future__ import annotations
 
 import structlog
 
-from trajlens.checks.protocol import Check, CheckContext, CheckResult, Severity
+from trajlens.checks.protocol import Check, CheckContext, CheckResult, Severity, Tier
 from trajlens.checks.registry import registry
 from trajlens.checks.utils import ShardColumnCache
 from trajlens.model.canonical import CanonicalDataset, FeatureSpec
@@ -60,6 +60,8 @@ class _FeatureDimensionalityCheck:
     category = "SEMANTIC"
     requires_video = False
     thread_safe = True
+    tier: Tier = Tier.INTEGRITY
+    formats: frozenset[str] | None = None
 
     def run(self, ds: CanonicalDataset, ctx: CheckContext) -> CheckResult:
         mismatches: list[str] = []
@@ -175,6 +177,8 @@ class _TaskIntegrityCheck:
     category = "SEMANTIC"
     requires_video = False
     thread_safe = True
+    tier: Tier = Tier.INTEGRITY
+    formats: frozenset[str] | None = None
 
     def run(self, ds: CanonicalDataset, ctx: CheckContext) -> CheckResult:
         violations: list[str] = []
@@ -255,6 +259,8 @@ class _CameraIntrinsicsPlausibleCheck:
     category = "SEMANTIC"
     requires_video = False
     thread_safe = True
+    tier: Tier = Tier.INTEGRITY
+    formats: frozenset[str] | None = None
 
     def run(self, ds: CanonicalDataset, ctx: CheckContext) -> CheckResult:
         intrinsics_features = [
@@ -365,6 +371,8 @@ class _LanguagePresentCheck:
     category = "SEMANTIC"
     requires_video = False
     thread_safe = True
+    tier: Tier = Tier.INTEGRITY
+    formats: frozenset[str] | None = None
 
     def run(self, ds: CanonicalDataset, ctx: CheckContext) -> CheckResult:
         # An episode has a language description if its tasks list is non-empty
