@@ -13,8 +13,9 @@ from __future__ import annotations
 
 from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass
-from typing import Protocol
+from typing import Any, Protocol
 
+import numpy.typing as npt
 import pyarrow.parquet as pq
 
 from trajlens.model.stats import StatsHandle
@@ -71,6 +72,44 @@ class ShardResolver(Protocol):
     def parquet_shard(self, episode: EpisodeRecord) -> pq.ParquetFile: ...
 
     def video_segment(self, episode: EpisodeRecord, camera: str) -> VideoSegment: ...
+
+
+@dataclass(frozen=True, slots=True)
+class FrameBatch:
+    """A columnar slice of frame data from one episode.
+
+    columns maps feature name to a numpy array of shape (n_frames, *feature_shape).
+    This is the only shape the check engine ever sees, regardless of whether the
+    underlying storage is Parquet, TFRecord, or HDF5.
+    """
+
+    columns: Mapping[str, npt.NDArray[Any]]
+    num_rows: int
+
+
+class FrameSource(Protocol):
+    """Format-neutral lazy frame access for one episode.
+
+    Why this satisfies three storage models:
+    - LeRobot (Parquet): iter_batches yields one row group at a time as a
+      FrameBatch. The LeRobotFrameSource implementation wraps pq.ParquetFile
+      and never materialises the full shard (05 §6: stream, don't slurp).
+    - RLDS (TFRecord, v0.5 M2): steps are nested under observation/ and
+      action/ sub-dicts. The RLDS adapter's FrameSource flattens them to
+      columns named "observation/image", "action" etc. The check engine
+      sees a regular FrameBatch; the flattening is the adapter's problem.
+    - rosbag (v0.5 M2): per-topic message streams have independent
+      timestamps. The rosbag adapter's FrameSource aligns them to a regular
+      grid by timestamp interpolation. The check engine sees a regular
+      FrameBatch; alignment is the adapter's problem.
+    The protocol is identical for all three; each adapter owns its translation.
+    """
+
+    def schema(self) -> Mapping[str, FeatureSpec]: ...
+
+    def num_rows(self) -> int: ...
+
+    def iter_batches(self, columns: Sequence[str] | None = None) -> Iterator[FrameBatch]: ...
 
 
 @dataclass(frozen=True, slots=True)
