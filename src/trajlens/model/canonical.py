@@ -1,4 +1,4 @@
-"""The canonical, version-agnostic dataset model (02_ARCHITECTURE.md §3.2, ADR-002).
+"""The canonical, format-neutral dataset model (02_ARCHITECTURE.md §3.2, ADR-002).
 
 CanonicalDataset is the typed in-memory view every check will eventually
 consume. It represents data; it does not judge it -- invariant checking
@@ -7,6 +7,13 @@ this module's. Building one never reads frame data or video bytes: only
 metadata (info.json, episode records, task table) is materialized, and even
 that is bounded by the same resource-bound primitives the source layer uses
 (sources/bounds.py), independent of what a dataset claims about itself.
+
+format_id/format_version (v0.5 M1-B) replace the earlier LeRobot-only version
+enum field: any future format adapter (RLDS, HDF5, Zarr, MCAP, rosbag)
+reports its own format_id and a free-form version string, matching
+adapters/protocol.py's FormatMatch. Only the LeRobot adapter exists today, so
+format_id is always "lerobot" in practice, but nothing in this module assumes
+that.
 """
 
 from __future__ import annotations
@@ -20,7 +27,6 @@ import pyarrow.parquet as pq
 
 from trajlens.model.stats import StatsHandle
 from trajlens.sources.handles import VideoShardHandle
-from trajlens.sources.version import DatasetVersion
 
 
 @dataclass(frozen=True, slots=True)
@@ -114,7 +120,7 @@ class FrameSource(Protocol):
 
 @dataclass(frozen=True, slots=True)
 class CanonicalDataset:
-    """Typed, version-agnostic view of a LeRobotDataset's declared structure.
+    """Typed, format-neutral view of a dataset's declared structure.
 
     Iterating yields EpisodeRecords only -- frame data and video bytes are
     never touched until parquet_shard_for_episode/video_segment_for_episode
@@ -123,7 +129,8 @@ class CanonicalDataset:
     video into memory; it yields handles").
     """
 
-    version: DatasetVersion
+    format_id: str
+    format_version: str
     fps: int
     features: Mapping[str, FeatureSpec]
     num_episodes: int
@@ -133,6 +140,10 @@ class CanonicalDataset:
     stats: StatsHandle
     _episodes: Sequence[EpisodeRecord]
     _resolver: ShardResolver
+
+    @property
+    def format_label(self) -> str:
+        return f"{self.format_id} v{self.format_version}"
 
     def __len__(self) -> int:
         return len(self._episodes)
