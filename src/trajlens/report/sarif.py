@@ -110,7 +110,7 @@ def render_sarif(
                     "driver": {
                         "name": "trajlens",
                         "version": trajlens.__version__,
-                        "informationUri": "https://github.com/yourusername/trajlens",
+                        "informationUri": "https://github.com/Kunal-Somani/trajlens",
                         "rules": rules,
                     }
                 },

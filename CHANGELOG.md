@@ -9,6 +9,12 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ## [Unreleased]
 
+## [0.4.1] - 2026-08-30
+
+### Fixed
+- Replaced placeholder `yourusername` repository URLs with real repo
+  in PyPI metadata, SARIF driver URI, and CONTRIBUTING.md.
+
 ## [0.4.0] - 2026-07-25
 
 ### Added

@@ -3,7 +3,7 @@
 ## Setup
 
 ```bash
-git clone https://github.com/yourusername/trajlens
+git clone https://github.com/Kunal-Somani/trajlens.git
 cd trajlens
 
 # Install uv if you don't have it
