@@ -29,7 +29,6 @@ from trajlens.report.episodes import build_episode_summaries, worst_episodes
 from trajlens.report.json_report import render_json
 from trajlens.report.share_report import render_share
 from trajlens.sources.loader import SourceLoader
-from trajlens.sources.version import DatasetVersion
 
 CTX = CheckContext(deep=False)
 
@@ -186,7 +185,7 @@ class TestJsonSchema:
         build_v3_metadata_data_disagreement(tmp_path, num_episodes=3)
         ds = _load(tmp_path)
         results = [METADATA_DATA_AGREEMENT.run(ds, CTX)]
-        payload = json.loads(render_json("ref", ds.version, 3, 300, results))
+        payload = json.loads(render_json("ref", ds.format_id, ds.format_version, 3, 300, results))
         result_entry = payload["results"][0]
         assert "per_episode" in result_entry
         assert "0" in result_entry["per_episode"]  # JSON keys are always strings
@@ -195,14 +194,14 @@ class TestJsonSchema:
         build_v3_dataset(tmp_path)
         ds = _load(tmp_path)
         results = [METADATA_DATA_AGREEMENT.run(ds, CTX)]
-        payload = json.loads(render_json("ref", ds.version, 3, 300, results))
+        payload = json.loads(render_json("ref", ds.format_id, ds.format_version, 3, 300, results))
         assert "per_episode" not in payload["results"][0]
 
     def test_episodes_key_present_when_per_episode_data_exists(self, tmp_path: Path) -> None:
         build_v3_metadata_data_disagreement(tmp_path, num_episodes=3)
         ds = _load(tmp_path)
         results = [METADATA_DATA_AGREEMENT.run(ds, CTX)]
-        payload = json.loads(render_json("ref", ds.version, 3, 300, results))
+        payload = json.loads(render_json("ref", ds.format_id, ds.format_version, 3, 300, results))
         assert "episodes" in payload
         assert len(payload["episodes"]["worst"]) >= 1
 
@@ -210,7 +209,7 @@ class TestJsonSchema:
         build_v3_dataset(tmp_path)
         ds = _load(tmp_path)
         results = [METADATA_DATA_AGREEMENT.run(ds, CTX)]
-        payload = json.loads(render_json("ref", ds.version, 3, 300, results))
+        payload = json.loads(render_json("ref", ds.format_id, ds.format_version, 3, 300, results))
         assert "episodes" not in payload
 
     def test_existing_schema_fields_unchanged(self, tmp_path: Path) -> None:
@@ -218,10 +217,11 @@ class TestJsonSchema:
         build_v3_dataset(tmp_path)
         ds = _load(tmp_path)
         results = [METADATA_DATA_AGREEMENT.run(ds, CTX)]
-        payload = json.loads(render_json("ref", ds.version, 3, 300, results))
+        payload = json.loads(render_json("ref", ds.format_id, ds.format_version, 3, 300, results))
         for key in (
             "ref",
-            "version",
+            "format_id",
+            "format_version",
             "trust_score",
             "score_formula_version",
             "grade",
@@ -239,7 +239,7 @@ class TestSharePathRedaction:
         build_v3_metadata_data_disagreement(tmp_path, num_episodes=3)
         ds = _load(tmp_path)
         results = [METADATA_DATA_AGREEMENT.run(ds, CTX)]
-        doc = render_share(ds.version, results)
+        doc = render_share(ds.format_id, ds.format_version, results)
         parsed = json.loads(doc)  # round-trips
         assert parsed["grade"] == "FAIL"
 
@@ -248,7 +248,7 @@ class TestSharePathRedaction:
         build_v3_metadata_data_disagreement(tmp_path, num_episodes=3)
         ds = _load(tmp_path)
         results = [METADATA_DATA_AGREEMENT.run(ds, CTX)]
-        doc = render_share(ds.version, results)
+        doc = render_share(ds.format_id, ds.format_version, results)
 
         def _scan(value: object) -> None:
             if isinstance(value, str):
@@ -270,14 +270,14 @@ class TestSharePathRedaction:
         build_v3_metadata_data_disagreement(tmp_path, num_episodes=3)
         ds = _load(tmp_path)
         results = [METADATA_DATA_AGREEMENT.run(ds, CTX)]
-        doc = render_share(ds.version, results)
+        doc = render_share(ds.format_id, ds.format_version, results)
         assert results[0].message not in doc
 
     def test_share_output_zero_findings_dataset(self, tmp_path: Path) -> None:
         build_v3_dataset(tmp_path)
         ds = _load(tmp_path)
         results = [METADATA_DATA_AGREEMENT.run(ds, CTX)]
-        doc = render_share(ds.version, results)
+        doc = render_share(ds.format_id, ds.format_version, results)
         parsed = json.loads(doc)
         assert parsed["grade"] == "PASS"
         assert parsed["finding_counts"] == {}
@@ -290,7 +290,7 @@ class TestSharePathRedaction:
         build_v3_metadata_data_disagreement(tmp_path, num_episodes=3)
         ds = _load(tmp_path)
         results = [METADATA_DATA_AGREEMENT.run(ds, CTX)]
-        doc = render_share(ds.version, results)
+        doc = render_share(ds.format_id, ds.format_version, results)
         for line in doc.splitlines():
             assert re.match(r"^(/|~|/home)", line) is None
 
@@ -301,7 +301,7 @@ class TestSharePathRedaction:
         build_v3_metadata_data_disagreement(dataset_dir, num_episodes=3)
         ds = _load(dataset_dir)
         results = [METADATA_DATA_AGREEMENT.run(ds, CTX)]
-        doc = render_share(ds.version, results, dataset_ref=dataset_dir.name)
+        doc = render_share(ds.format_id, ds.format_version, results, dataset_ref=dataset_dir.name)
         parsed = json.loads(doc)
         assert parsed["dataset_ref"] == "my_dataset"
         assert "nested_parent" not in doc
@@ -326,7 +326,9 @@ class TestSharePathRedaction:
         build_v3_metadata_data_disagreement(tmp_path, num_episodes=3)
         ds = _load(tmp_path)
         results = [METADATA_DATA_AGREEMENT.run(ds, CTX)]
-        doc = render_share(ds.version, results, dataset_ref="some-org/some-dataset")
+        doc = render_share(
+            ds.format_id, ds.format_version, results, dataset_ref="some-org/some-dataset"
+        )
         parsed = json.loads(doc)
         assert parsed["dataset_ref"] == "some-org/some-dataset"
 
@@ -334,7 +336,7 @@ class TestSharePathRedaction:
         build_v3_metadata_data_disagreement(tmp_path, num_episodes=3)
         ds = _load(tmp_path)
         results = [METADATA_DATA_AGREEMENT.run(ds, CTX)]
-        doc = render_share(ds.version, results)
+        doc = render_share(ds.format_id, ds.format_version, results)
         parsed = json.loads(doc)
         assert "dataset_ref" not in parsed
 
@@ -343,6 +345,7 @@ class TestShareVersionHandling:
     def test_share_uses_dataset_version(self, tmp_path: Path) -> None:
         build_v3_dataset(tmp_path)
         ds = _load(tmp_path)
-        doc = render_share(ds.version, [])
+        doc = render_share(ds.format_id, ds.format_version, [])
         parsed = json.loads(doc)
-        assert parsed["format_version"] == DatasetVersion.V3_0.value
+        assert parsed["format_id"] == "lerobot"
+        assert parsed["format_version"] == "3.0"

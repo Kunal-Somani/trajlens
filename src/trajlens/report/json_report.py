@@ -3,7 +3,8 @@
 Schema:
   {
     "ref": str,
-    "version": str,
+    "format_id": str,
+    "format_version": str,
     "trust_score": int,
     "score_formula_version": str,
     "grade": "PASS" | "WARN" | "FAIL" | "ERROR",
@@ -53,7 +54,6 @@ from trajlens.baseline import BaselineDiff
 from trajlens.checks.protocol import CheckResult, Severity
 from trajlens.report.episodes import worst_episodes
 from trajlens.report.trust_score import SCORE_FORMULA_VERSION, compute_trust_score
-from trajlens.sources.version import DatasetVersion
 
 
 def _grade(worst: Severity) -> str:
@@ -81,7 +81,8 @@ def _result_entry(r: CheckResult) -> dict[str, object]:
 
 def render_json(
     ref: str,
-    version: DatasetVersion,
+    format_id: str,
+    format_version: str,
     num_episodes: int,
     num_frames: int | None,
     results: list[CheckResult],
@@ -100,7 +101,8 @@ def render_json(
 
     payload: dict[str, object] = {
         "ref": ref,
-        "version": version.value,
+        "format_id": format_id,
+        "format_version": format_version,
         "trust_score": score,
         "score_formula_version": SCORE_FORMULA_VERSION,
         "grade": _grade(worst),
@@ -150,7 +152,8 @@ def render_json_load_error(ref: str, error_category: str, message: str) -> str:
     """
     payload: dict[str, object] = {
         "ref": ref,
-        "version": None,
+        "format_id": None,
+        "format_version": None,
         "trust_score": None,
         "score_formula_version": SCORE_FORMULA_VERSION,
         "grade": "ERROR",

@@ -277,7 +277,8 @@ class TestVersionDetected:
         result = VERSION_DETECTED.run(_load(tmp_path), CTX)
         assert result.severity is Severity.INFO
         assert "v3.0" in result.message
-        assert result.details["version"] == "v3.0"
+        assert result.details["format_id"] == "lerobot"
+        assert result.details["format_version"] == "3.0"
 
     def test_v2_reports_version(self, tmp_path: Path) -> None:
         build_v2_dataset(tmp_path, codebase_version="v2.1")

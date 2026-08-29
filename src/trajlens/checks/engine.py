@@ -13,7 +13,7 @@ absolute byte figure. No check in checks/ ever materializes more than one
 shard's worth of its needed columns in memory at a time — none accumulate
 data across shards.
 
-  STRUCTURAL.VERSION_DETECTED          O(1) — reads only ds.version, no shard I/O.
+  STRUCTURAL.VERSION_DETECTED          O(1) — reads only ds.format_id/format_version, no shard I/O.
   STRUCTURAL.SCHEMA_CONSISTENCY        O(shard rows) per shard — pf.schema_arrow
                                         is footer metadata only; no column read.
   STRUCTURAL.INDEX_CONTINUITY          O(shard rows) per shard — via

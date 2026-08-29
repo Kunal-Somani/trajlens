@@ -17,7 +17,6 @@ import trajlens
 from trajlens.checks.protocol import CheckResult, Severity
 from trajlens.report.episodes import worst_episodes
 from trajlens.report.trust_score import SCORE_FORMULA_VERSION, compute_trust_score
-from trajlens.sources.version import DatasetVersion
 
 
 def _grade(worst: Severity) -> str:
@@ -31,7 +30,8 @@ def _grade(worst: Severity) -> str:
 
 
 def render_share(
-    version: DatasetVersion,
+    format_id: str,
+    format_version: str,
     results: list[CheckResult],
     *,
     dataset_ref: str | None = None,
@@ -58,7 +58,8 @@ def render_share(
         "trust_score": score,
         "score_formula_version": SCORE_FORMULA_VERSION,
         "grade": _grade(worst),
-        "format_version": version.value,
+        "format_id": format_id,
+        "format_version": format_version,
         "finding_counts": finding_counts,
     }
     if dataset_ref is not None:

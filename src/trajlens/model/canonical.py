@@ -1,4 +1,4 @@
-"""The canonical, version-agnostic dataset model (02_ARCHITECTURE.md §3.2, ADR-002).
+"""The canonical, format-neutral dataset model (02_ARCHITECTURE.md §3.2, ADR-002).
 
 CanonicalDataset is the typed in-memory view every check will eventually
 consume. It represents data; it does not judge it -- invariant checking
@@ -7,19 +7,26 @@ this module's. Building one never reads frame data or video bytes: only
 metadata (info.json, episode records, task table) is materialized, and even
 that is bounded by the same resource-bound primitives the source layer uses
 (sources/bounds.py), independent of what a dataset claims about itself.
+
+format_id/format_version (v0.5 M1-B) replace the earlier LeRobot-only version
+enum field: any future format adapter (RLDS, HDF5, Zarr, MCAP, rosbag)
+reports its own format_id and a free-form version string, matching
+adapters/protocol.py's FormatMatch. Only the LeRobot adapter exists today, so
+format_id is always "lerobot" in practice, but nothing in this module assumes
+that.
 """
 
 from __future__ import annotations
 
-from collections.abc import Iterator, Mapping, Sequence
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from dataclasses import dataclass
-from typing import Protocol
+from typing import Any, Protocol
 
+import numpy.typing as npt
 import pyarrow.parquet as pq
 
 from trajlens.model.stats import StatsHandle
 from trajlens.sources.handles import VideoShardHandle
-from trajlens.sources.version import DatasetVersion
 
 
 @dataclass(frozen=True, slots=True)
@@ -64,8 +71,8 @@ class VideoSegment:
 class ShardResolver(Protocol):
     """Version-specific lookup of which shard file holds an episode's payload.
 
-    Implemented once per format version (model/adapters.py) so CanonicalDataset
-    itself stays free of version branching.
+    Implemented once per format version (model/lerobot_v2.py, lerobot_v3.py) so
+    CanonicalDataset itself stays free of version branching.
     """
 
     def parquet_shard(self, episode: EpisodeRecord) -> pq.ParquetFile: ...
@@ -74,8 +81,46 @@ class ShardResolver(Protocol):
 
 
 @dataclass(frozen=True, slots=True)
+class FrameBatch:
+    """A columnar slice of frame data from one episode.
+
+    columns maps feature name to a numpy array of shape (n_frames, *feature_shape).
+    This is the only shape the check engine ever sees, regardless of whether the
+    underlying storage is Parquet, TFRecord, or HDF5.
+    """
+
+    columns: Mapping[str, npt.NDArray[Any]]
+    num_rows: int
+
+
+class FrameSource(Protocol):
+    """Format-neutral lazy frame access for one episode.
+
+    Why this satisfies three storage models:
+    - LeRobot (Parquet): iter_batches yields one row group at a time as a
+      FrameBatch. The LeRobotFrameSource implementation wraps pq.ParquetFile
+      and never materialises the full shard (05 §6: stream, don't slurp).
+    - RLDS (TFRecord, v0.5 M2): steps are nested under observation/ and
+      action/ sub-dicts. The RLDS adapter's FrameSource flattens them to
+      columns named "observation/image", "action" etc. The check engine
+      sees a regular FrameBatch; the flattening is the adapter's problem.
+    - rosbag (v0.5 M2): per-topic message streams have independent
+      timestamps. The rosbag adapter's FrameSource aligns them to a regular
+      grid by timestamp interpolation. The check engine sees a regular
+      FrameBatch; alignment is the adapter's problem.
+    The protocol is identical for all three; each adapter owns its translation.
+    """
+
+    def schema(self) -> Mapping[str, FeatureSpec]: ...
+
+    def num_rows(self) -> int: ...
+
+    def iter_batches(self, columns: Sequence[str] | None = None) -> Iterator[FrameBatch]: ...
+
+
+@dataclass(frozen=True, slots=True)
 class CanonicalDataset:
-    """Typed, version-agnostic view of a LeRobotDataset's declared structure.
+    """Typed, format-neutral view of a dataset's declared structure.
 
     Iterating yields EpisodeRecords only -- frame data and video bytes are
     never touched until parquet_shard_for_episode/video_segment_for_episode
@@ -84,7 +129,8 @@ class CanonicalDataset:
     video into memory; it yields handles").
     """
 
-    version: DatasetVersion
+    format_id: str
+    format_version: str
     fps: int
     features: Mapping[str, FeatureSpec]
     num_episodes: int
@@ -94,6 +140,11 @@ class CanonicalDataset:
     stats: StatsHandle
     _episodes: Sequence[EpisodeRecord]
     _resolver: ShardResolver
+    _frame_source_factory: Callable[[EpisodeRecord], FrameSource]
+
+    @property
+    def format_label(self) -> str:
+        return f"{self.format_id} v{self.format_version}"
 
     def __len__(self) -> int:
         return len(self._episodes)
@@ -112,3 +163,7 @@ class CanonicalDataset:
     def video_segment_for_episode(self, episode: EpisodeRecord, camera: str) -> VideoSegment:
         """Return a lazy handle to the video segment for *episode* on *camera*."""
         return self._resolver.video_segment(episode, camera)
+
+    def frame_source_for_episode(self, episode: EpisodeRecord) -> FrameSource:
+        """Return a format-neutral FrameSource for *episode*'s frame data."""
+        return self._frame_source_factory(episode)

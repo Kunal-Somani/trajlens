@@ -49,7 +49,6 @@ from trajlens.errors import RepairError
 from trajlens.model.canonical import CanonicalDataset
 from trajlens.repair.protocol import Diff, FeatureFieldChange, RepairSummary
 from trajlens.sources.paths import safe_join
-from trajlens.sources.version import DatasetVersion
 
 log = structlog.get_logger(__name__)
 
@@ -148,9 +147,9 @@ def find_orphan_shards(ds: CanonicalDataset) -> list[OrphanShard]:
     v3.0 only. Raises RepairError if episode metadata cannot be read with
     confidence (ambiguous/unreadable), per the fail-closed refusal rule.
     """
-    if ds.version is not DatasetVersion.V3_0:
+    if ds.format_id != "lerobot" or ds.format_version != "3.0":
         raise RepairError(
-            f"orphan shard detection only supports v3.0 datasets; got version {ds.version!r}. "
+            f"orphan shard detection only supports v3.0 datasets; got {ds.format_label}. "
             "v2.x's one-file-per-episode naming has no metadata-vs-disk indirection to diff."
         )
 

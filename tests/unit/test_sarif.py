@@ -20,10 +20,10 @@ from tests.fixtures.builders import (
 from trajlens.checks.protocol import CheckResult, Severity
 from trajlens.cli import app
 from trajlens.report.sarif import render_sarif
-from trajlens.sources.version import DatasetVersion
 
 _SCHEMA_PATH = Path(__file__).parent.parent / "fixtures" / "sarif-schema-2.1.0.json"
-_VER = DatasetVersion.V3_0
+_FORMAT_ID = "lerobot"
+_FORMAT_VERSION = "3.0"
 
 runner = CliRunner()
 
@@ -35,11 +35,11 @@ def _r(severity: Severity, check_id: str = "TEST.X") -> CheckResult:
 class TestSarifSchemaValidation:
     def test_clean_results_validate_against_sarif_schema(self) -> None:
         schema = json.loads(_SCHEMA_PATH.read_text())
-        doc = json.loads(render_sarif("test/ref", _VER, 1, 10, []))
+        doc = json.loads(render_sarif("test/ref", _FORMAT_ID, _FORMAT_VERSION, 1, 10, []))
         jsonschema.validate(instance=doc, schema=schema)
 
     def test_driver_information_uri_points_to_real_repo(self) -> None:
-        doc = json.loads(render_sarif("test/ref", _VER, 1, 10, []))
+        doc = json.loads(render_sarif("test/ref", _FORMAT_ID, _FORMAT_VERSION, 1, 10, []))
         driver = doc["runs"][0]["tool"]["driver"]
         assert driver["informationUri"] == "https://github.com/Kunal-Somani/trajlens"
 
@@ -51,7 +51,7 @@ class TestSarifSchemaValidation:
             _r(Severity.WARN, "TEST.WARN"),
             _r(Severity.INFO, "TEST.INFO"),
         ]
-        doc = json.loads(render_sarif("test/ref", _VER, 3, 100, results))
+        doc = json.loads(render_sarif("test/ref", _FORMAT_ID, _FORMAT_VERSION, 3, 100, results))
         jsonschema.validate(instance=doc, schema=schema)
 
 

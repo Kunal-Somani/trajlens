@@ -14,7 +14,6 @@ from rich.text import Text
 from trajlens.baseline import BaselineDiff
 from trajlens.checks.protocol import CheckResult, Severity
 from trajlens.report.trust_score import SCORE_FORMULA_VERSION, compute_trust_score
-from trajlens.sources.version import DatasetVersion
 
 
 def _severity_style(severity: Severity) -> str:
@@ -71,7 +70,8 @@ def _render_baseline_findings(con: Console, diff: BaselineDiff, *, show_unchange
 
 def render_terminal(
     ref: str,
-    version: DatasetVersion,
+    format_id: str,
+    format_version: str,
     num_episodes: int,
     num_frames: int | None,
     results: list[CheckResult],
@@ -90,7 +90,7 @@ def render_terminal(
 
     con.print()
     con.print(f"[bold]trajlens lint:[/bold] {ref}")
-    con.print(f"  version  : {version.value}")
+    con.print(f"  format   : {format_id} v{format_version}")
     con.print(f"  episodes : {num_episodes}")
     frames_str = str(num_frames) if num_frames is not None else "unknown"
     con.print(f"  frames   : {frames_str}")

@@ -227,12 +227,10 @@ class TaskIndexRepairFixer:
 
 def _check_preconditions(ds: CanonicalDataset) -> None:
     """Raise RepairError for any condition that makes repair unsafe or undefined."""
-    from trajlens.sources.version import DatasetVersion
-
-    if ds.version is not DatasetVersion.V3_0:
+    if ds.format_id != "lerobot" or ds.format_version != "3.0":
         raise RepairError(
             f"TaskIndexRepairFixer only supports v3.0 datasets; "
-            f"got version {ds.version!r}. For v2.x datasets, convert to v3.0 first."
+            f"got {ds.format_label}. For v2.x datasets, convert to v3.0 first."
         )
     if "task_index" not in ds.features:
         raise RepairError("TaskIndexRepairFixer requires a 'task_index' feature in info.json.")
