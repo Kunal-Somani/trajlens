@@ -95,7 +95,7 @@ class Watcher:
 
         ctx = CheckContext(deep=self._deep)
         engine = CheckEngine(self._registry)
-        results = engine.run(ds, ctx)
+        results = engine.run(ds, ctx).results
 
         worst = Severity.INFO
         for result in results:

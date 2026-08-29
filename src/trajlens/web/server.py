@@ -33,9 +33,16 @@ def build_report_json(ref: str) -> str:
     ds = build_canonical_dataset(handle)
     ctx = CheckContext(deep=False)
     engine = CheckEngine(registry)
-    results: list[CheckResult] = engine.run(ds, ctx)
+    engine_result = engine.run(ds, ctx)
+    results: list[CheckResult] = list(engine_result.results)
     return render_json(
-        ref, ds.format_id, ds.format_version, ds.num_episodes, ds.num_frames, results
+        ref,
+        ds.format_id,
+        ds.format_version,
+        ds.num_episodes,
+        ds.num_frames,
+        results,
+        skipped_checks=engine_result.skipped,
     )
 
 

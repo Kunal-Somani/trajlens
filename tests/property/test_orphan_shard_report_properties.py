@@ -91,7 +91,7 @@ def test_quarantine_converges_and_introduces_no_new_findings(
     ds_source = build_canonical_dataset(handle)
 
     engine = CheckEngine(registry)
-    pre_results = engine.run(ds_source, CTX)
+    pre_results = engine.run(ds_source, CTX).results
     pre_ids = {r.check_id for r in pre_results if r.severity >= Severity.WARN}
 
     if not expected:
@@ -112,7 +112,7 @@ def test_quarantine_converges_and_introduces_no_new_findings(
         f"(data_indices={data_indices}, video_indices={video_indices})"
     )
 
-    post_results = engine.run(ds_fixed, CTX)
+    post_results = engine.run(ds_fixed, CTX).results
     post_ids = {r.check_id for r in post_results if r.severity >= Severity.WARN}
     assert CHECK_ID not in post_ids
     new_findings = post_ids - pre_ids

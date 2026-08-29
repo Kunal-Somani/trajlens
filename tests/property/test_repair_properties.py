@@ -60,7 +60,7 @@ def test_repair_then_relint_clears_timestamp_drift(
     engine = CheckEngine(registry)
 
     # Capture pre-repair WARN/FAIL check-ids (excluding the drift finding itself).
-    pre_results = engine.run(ds_source, CTX)
+    pre_results = engine.run(ds_source, CTX).results
     pre_fail_ids = {
         r.check_id for r in pre_results if r.severity >= Severity.WARN and r.check_id != CHECK_ID
     }
@@ -70,7 +70,7 @@ def test_repair_then_relint_clears_timestamp_drift(
 
     handle_fixed = SourceLoader().resolve(str(output))
     ds_fixed = build_canonical_dataset(handle_fixed)
-    post_results = engine.run(ds_fixed, CTX)
+    post_results = engine.run(ds_fixed, CTX).results
 
     # The drift finding must be gone (INFO or better).
     drift_post = next((r for r in post_results if r.check_id == CHECK_ID), None)

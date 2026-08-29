@@ -135,6 +135,7 @@ def lint(
         render_share,
         render_terminal,
     )
+    from trajlens.report.trust_score import integrity_only
     from trajlens.sources.loader import SourceLoader
 
     if show_unchanged and baseline is None:
@@ -153,7 +154,9 @@ def lint(
 
     ctx = CheckContext(deep=deep)
     engine = CheckEngine(registry)
-    results: list[CheckResult] = engine.run(ds, ctx, parallel=parallel)
+    engine_result = engine.run(ds, ctx, parallel=parallel)
+    results: list[CheckResult] = list(engine_result.results)
+    skipped_checks = engine_result.skipped
 
     if update_baseline is not None:
         BaselineStore.from_results(results).save(Path(update_baseline))
@@ -171,9 +174,9 @@ def lint(
         baseline_diff = store.diff(results)
 
     worst = (
-        max((r.severity for r in baseline_diff.new), default=Severity.INFO)
+        max((r.severity for r in integrity_only(baseline_diff.new)), default=Severity.INFO)
         if baseline_diff is not None
-        else max((r.severity for r in results), default=Severity.INFO)
+        else max((r.severity for r in integrity_only(results)), default=Severity.INFO)
     )
 
     if json_output:
@@ -186,6 +189,7 @@ def lint(
                 ds.num_frames,
                 results,
                 baseline_diff=baseline_diff,
+                skipped_checks=skipped_checks,
             )
         )
     else:
@@ -198,6 +202,7 @@ def lint(
             results,
             baseline_diff=baseline_diff,
             show_unchanged=show_unchanged,
+            skipped_checks=skipped_checks,
         )
 
     if update_baseline is not None:
@@ -211,7 +216,13 @@ def lint(
 
     if sarif is not None:
         sarif_doc = render_sarif(
-            ref, ds.format_id, ds.format_version, ds.num_episodes, ds.num_frames, results
+            ref,
+            ds.format_id,
+            ds.format_version,
+            ds.num_episodes,
+            ds.num_frames,
+            results,
+            skipped_checks=skipped_checks,
         )
         Path(sarif).write_text(sarif_doc, encoding="utf-8")
 
@@ -356,7 +367,7 @@ def fix(
 
     ctx = CheckContext(deep=False)
     engine = CheckEngine(registry)
-    results = engine.run(ds, ctx)
+    results = list(engine.run(ds, ctx).results)
     fixer_order = build_fixer_order(quarantine=quarantine)
 
     try:

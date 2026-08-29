@@ -15,6 +15,7 @@ Schema:
         "check_id": str,
         "severity": str,
         "category": str,
+        "tier": "INTEGRITY" | "QUALITY",
         "message": str,
         "details": dict,  # check-specific structured detail, shape varies by check_id
         "per_episode": dict[str, str] | absent  # episode_index (as string) -> finding;
@@ -22,6 +23,7 @@ Schema:
       },
       ...
     ],
+    "skipped_checks": list[str],  # check_ids skipped due to format scope
     "episodes": {  # absent entirely if no check produced per-episode data
       "worst": [
         {
@@ -49,11 +51,12 @@ Exit codes (enforced by CLI, not this module):
 from __future__ import annotations
 
 import json
+from collections.abc import Sequence
 
 from trajlens.baseline import BaselineDiff
 from trajlens.checks.protocol import CheckResult, Severity
 from trajlens.report.episodes import worst_episodes
-from trajlens.report.trust_score import SCORE_FORMULA_VERSION, compute_trust_score
+from trajlens.report.trust_score import SCORE_FORMULA_VERSION, compute_trust_score, integrity_only
 
 
 def _grade(worst: Severity) -> str:
@@ -71,6 +74,7 @@ def _result_entry(r: CheckResult) -> dict[str, object]:
         "check_id": r.check_id,
         "severity": r.severity.value,
         "category": r.check_id.split(".")[0],
+        "tier": r.tier.value,
         "message": r.message,
         "details": r.details,
     }
@@ -88,13 +92,15 @@ def render_json(
     results: list[CheckResult],
     *,
     baseline_diff: BaselineDiff | None = None,
+    skipped_checks: Sequence[str] = (),
 ) -> str:
     """Return a JSON string representing the lint report.
 
     When baseline_diff is given, adds a top-level "baseline" key with
     "new"/"resolved"/"unchanged" lists (additive; all other keys unchanged).
+    skipped_checks lists check_ids the engine skipped due to format scope.
     """
-    worst = max((r.severity for r in results), default=Severity.INFO)
+    worst = max((r.severity for r in integrity_only(results)), default=Severity.INFO)
     score = compute_trust_score(results)
 
     result_entries = [_result_entry(r) for r in results]
@@ -109,6 +115,7 @@ def render_json(
         "num_episodes": num_episodes,
         "num_frames": num_frames,
         "results": result_entries,
+        "skipped_checks": list(skipped_checks),
     }
 
     worst_eps = worst_episodes(results)
@@ -162,5 +169,6 @@ def render_json_load_error(ref: str, error_category: str, message: str) -> str:
         "error_category": error_category,
         "error_message": message,
         "results": [],
+        "skipped_checks": [],
     }
     return json.dumps(payload, indent=2)

@@ -59,7 +59,7 @@ def test_repair_then_relint_clears_metadata_data_agreement(
 
     engine = CheckEngine(registry)
 
-    pre_results = engine.run(ds_source, CTX)
+    pre_results = engine.run(ds_source, CTX).results
     pre_fail_ids = {
         r.check_id for r in pre_results if r.severity >= Severity.WARN and r.check_id != CHECK_ID
     }
@@ -69,7 +69,7 @@ def test_repair_then_relint_clears_metadata_data_agreement(
 
     handle_fixed = SourceLoader().resolve(str(output))
     ds_fixed = build_canonical_dataset(handle_fixed)
-    post_results = engine.run(ds_fixed, CTX)
+    post_results = engine.run(ds_fixed, CTX).results
 
     agreement_post = next((r for r in post_results if r.check_id == CHECK_ID), None)
     assert agreement_post is None or agreement_post.severity < Severity.WARN, (

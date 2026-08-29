@@ -9,6 +9,7 @@ from typer.testing import CliRunner
 
 from tests.fixtures.builders import build_v3_real_video
 from trajlens.baseline import BaselineStore
+from trajlens.checks.engine import EngineResult
 from trajlens.checks.protocol import CheckResult, Severity
 from trajlens.cli import app
 
@@ -24,7 +25,10 @@ class TestBaselineExitCode:
         baseline_path = tmp_path / "baseline.json"
         BaselineStore.from_results([_FAIL]).save(baseline_path)
 
-        with patch("trajlens.checks.engine.CheckEngine.run", return_value=[_FAIL]):
+        with patch(
+            "trajlens.checks.engine.CheckEngine.run",
+            return_value=EngineResult(results=(_FAIL,), skipped=()),
+        ):
             result = runner.invoke(app, ["lint", str(tmp_path), "--baseline", str(baseline_path)])
         assert result.exit_code == 0
 
@@ -33,11 +37,17 @@ class TestBaselineExitCode:
         baseline_path = tmp_path / "baseline.json"
         BaselineStore.from_results([]).save(baseline_path)
 
-        with patch("trajlens.checks.engine.CheckEngine.run", return_value=[_WARN]):
+        with patch(
+            "trajlens.checks.engine.CheckEngine.run",
+            return_value=EngineResult(results=(_WARN,), skipped=()),
+        ):
             result = runner.invoke(app, ["lint", str(tmp_path), "--baseline", str(baseline_path)])
         assert result.exit_code == 1
 
-        with patch("trajlens.checks.engine.CheckEngine.run", return_value=[_FAIL]):
+        with patch(
+            "trajlens.checks.engine.CheckEngine.run",
+            return_value=EngineResult(results=(_FAIL,), skipped=()),
+        ):
             result = runner.invoke(app, ["lint", str(tmp_path), "--baseline", str(baseline_path)])
         assert result.exit_code == 2
 
@@ -46,7 +56,16 @@ class TestBaselineExitCode:
         baseline_path = tmp_path / "baseline.json"
         BaselineStore.from_results([_FAIL]).save(baseline_path)
 
-        with patch("trajlens.checks.engine.CheckEngine.run", return_value=[_FAIL, _WARN]):
+        with patch(
+            "trajlens.checks.engine.CheckEngine.run",
+            return_value=EngineResult(
+                results=(
+                    _FAIL,
+                    _WARN,
+                ),
+                skipped=(),
+            ),
+        ):
             result = runner.invoke(app, ["lint", str(tmp_path), "--baseline", str(baseline_path)])
         assert "[NEW]" in result.output
         assert "TEMPORAL.Y" in result.output
@@ -64,7 +83,10 @@ class TestShowUnchangedRequiresBaseline:
         baseline_path = tmp_path / "baseline.json"
         BaselineStore.from_results([_FAIL]).save(baseline_path)
 
-        with patch("trajlens.checks.engine.CheckEngine.run", return_value=[_FAIL]):
+        with patch(
+            "trajlens.checks.engine.CheckEngine.run",
+            return_value=EngineResult(results=(_FAIL,), skipped=()),
+        ):
             result = runner.invoke(
                 app,
                 [
@@ -83,7 +105,10 @@ class TestUpdateBaseline:
         build_v3_real_video(tmp_path)
         baseline_path = tmp_path / "baseline.json"
 
-        with patch("trajlens.checks.engine.CheckEngine.run", return_value=[_FAIL]):
+        with patch(
+            "trajlens.checks.engine.CheckEngine.run",
+            return_value=EngineResult(results=(_FAIL,), skipped=()),
+        ):
             result = runner.invoke(
                 app, ["lint", str(tmp_path), "--update-baseline", str(baseline_path)]
             )
@@ -97,7 +122,10 @@ class TestUpdateBaseline:
         build_v3_real_video(tmp_path)
         baseline_path = tmp_path / "baseline.json"
 
-        with patch("trajlens.checks.engine.CheckEngine.run", return_value=[_FAIL]):
+        with patch(
+            "trajlens.checks.engine.CheckEngine.run",
+            return_value=EngineResult(results=(_FAIL,), skipped=()),
+        ):
             result = runner.invoke(
                 app, ["lint", str(tmp_path), "--update-baseline", str(baseline_path)]
             )

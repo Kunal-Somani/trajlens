@@ -31,7 +31,7 @@ from tests.fixtures.builders import (
     build_v3_wrong_schema,
 )
 from trajlens.checks.engine import CheckEngine
-from trajlens.checks.protocol import Check, CheckContext, CheckResult, Severity
+from trajlens.checks.protocol import Check, CheckContext, CheckResult, Severity, Tier
 from trajlens.checks.registry import CheckRegistry
 from trajlens.checks.structural import (
     INDEX_CONTINUITY,
@@ -150,6 +150,9 @@ class TestCheckEngine:
             severity = Severity.FAIL
             category = "TEST"
             requires_video = False
+            thread_safe = True
+            tier = Tier.INTEGRITY
+            formats: frozenset[str] | None = None
 
             def run(self, ds: Any, ctx: Any) -> CheckResult:
                 raise RuntimeError("intentional crash for ADR-003 test")
@@ -162,6 +165,9 @@ class TestCheckEngine:
             severity = Severity.INFO
             category = "TEST"
             requires_video = False
+            thread_safe = True
+            tier = Tier.INTEGRITY
+            formats: frozenset[str] | None = None
 
             def run(self, ds: Any, ctx: Any) -> CheckResult:
                 return CheckResult(check_id=self.id, severity=Severity.INFO, message="all good")
@@ -174,7 +180,7 @@ class TestCheckEngine:
         reg = CheckRegistry()
         reg.register(self._make_crashing_check())
         engine = CheckEngine(reg)
-        results = engine.run(ds, CTX)
+        results = engine.run(ds, CTX).results
         assert len(results) == 1
         assert results[0].severity is Severity.ERROR
         assert "RuntimeError" in results[0].message
@@ -246,14 +252,17 @@ class TestCheckEngine:
             severity = Severity.FAIL
             category = "TEST"
             requires_video = True
+            thread_safe = True
+            tier = Tier.INTEGRITY
+            formats: frozenset[str] | None = None
 
             def run(self, ds2: Any, ctx: Any) -> CheckResult:  # pragma: no cover
                 raise AssertionError("should not be called")
 
         reg.register(_VideoOnly())  # type: ignore[arg-type]
         engine = CheckEngine(reg)
-        results = engine.run(ds, CTX)
-        assert results == []  # skipped because no cameras
+        results = engine.run(ds, CTX).results
+        assert results == ()  # skipped because no cameras
 
     def test_ok_check_passes_through(self, tmp_path: Path) -> None:
         build_v3_dataset(tmp_path)
@@ -261,7 +270,7 @@ class TestCheckEngine:
         reg = CheckRegistry()
         reg.register(self._make_ok_check())
         engine = CheckEngine(reg)
-        results = engine.run(ds, CTX)
+        results = engine.run(ds, CTX).results
         assert len(results) == 1
         assert results[0].severity is Severity.INFO
 

@@ -74,7 +74,7 @@ class TestRoundTrip:
 
         engine = CheckEngine(registry)
         ds_source = _load(source)
-        pre_results = engine.run(ds_source, CTX)
+        pre_results = engine.run(ds_source, CTX).results
         pre_fail_ids = {r.check_id for r in pre_results if r.severity >= Severity.WARN}
 
         fixer = VideoMetadataSyncFixer()
@@ -89,7 +89,7 @@ class TestRoundTrip:
         post_diff = fixer.dry_run(ds_fixed)
         assert post_diff.is_noop, "fixer's own dry_run() must be a noop against repaired output"
 
-        post_results = engine.run(ds_fixed, CTX)
+        post_results = engine.run(ds_fixed, CTX).results
         post_fail_ids = {r.check_id for r in post_results if r.severity >= Severity.WARN}
         new_findings = post_fail_ids - pre_fail_ids
         assert not new_findings, (

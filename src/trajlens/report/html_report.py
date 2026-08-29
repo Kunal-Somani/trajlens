@@ -10,7 +10,7 @@ from __future__ import annotations
 import html
 
 from trajlens.checks.protocol import CheckResult, Severity
-from trajlens.report.trust_score import SCORE_FORMULA_VERSION, compute_trust_score
+from trajlens.report.trust_score import SCORE_FORMULA_VERSION, compute_trust_score, integrity_only
 
 _CSS = """
 body {
@@ -62,7 +62,7 @@ def render_html(
     results: list[CheckResult],
 ) -> str:
     """Return a self-contained HTML document representing the lint report."""
-    worst = max((r.severity for r in results), default=Severity.INFO)
+    worst = max((r.severity for r in integrity_only(results)), default=Severity.INFO)
     score = compute_trust_score(results)
     grade_label, grade_class = _grade_label(worst)
 
