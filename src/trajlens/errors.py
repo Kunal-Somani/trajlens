@@ -37,6 +37,14 @@ class SourceResolutionError(DatasetError):
     """
 
 
+class FormatDetectionError(DatasetError):
+    """Raised when two or more adapters both claim to detect the same source.
+
+    Silently picking between competing detections is a class of silent failure
+    the manual forbids. The caller must resolve ambiguity explicitly.
+    """
+
+
 class CheckExecutionError(TrajlensError):
     """A check crashed during execution.
 
