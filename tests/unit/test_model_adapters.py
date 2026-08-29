@@ -21,7 +21,6 @@ from tests.fixtures.builders import (
 from trajlens.errors import DatasetFormatError
 from trajlens.model import build_canonical_dataset
 from trajlens.sources.loader import SourceHandle, SourceLoader
-from trajlens.sources.version import DatasetVersion
 
 
 def _resolve(tmp_path: Path) -> SourceHandle:
@@ -33,7 +32,8 @@ class TestHappyPathV3:
         build_v3_dataset(tmp_path, num_episodes=3, camera="top")
         ds = build_canonical_dataset(_resolve(tmp_path))
 
-        assert ds.version is DatasetVersion.V3_0
+        assert ds.format_id == "lerobot"
+        assert ds.format_version == "3.0"
         assert ds.fps == 30
         assert ds.num_episodes == 3
         assert ds.num_frames == 3 * FRAMES_PER_EPISODE
@@ -84,7 +84,8 @@ class TestHappyPathV2:
         build_v2_dataset(tmp_path, codebase_version=codebase_version, num_episodes=3, camera="top")
         ds = build_canonical_dataset(_resolve(tmp_path))
 
-        assert ds.version.value == codebase_version
+        assert ds.format_id == "lerobot"
+        assert ds.format_version == codebase_version.removeprefix("v")
         assert ds.num_episodes == 3
         assert ds.cameras == ("top",)
         episodes = list(ds)
@@ -255,7 +256,8 @@ class TestTasksParquetSchemaCompat:
         ds = build_canonical_dataset(_resolve(tmp_path))
 
         assert ds.task_table == {0: "do the thing"}
-        assert ds.version is DatasetVersion.V3_0
+        assert ds.format_id == "lerobot"
+        assert ds.format_version == "3.0"
         assert ds.num_episodes == 2
 
     def test_hub_schema_episodes_see_correct_task_descriptions(self, tmp_path: Path) -> None:

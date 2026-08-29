@@ -18,7 +18,7 @@ that.
 
 from __future__ import annotations
 
-from collections.abc import Iterator, Mapping, Sequence
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any, Protocol
 
@@ -71,8 +71,8 @@ class VideoSegment:
 class ShardResolver(Protocol):
     """Version-specific lookup of which shard file holds an episode's payload.
 
-    Implemented once per format version (model/adapters.py) so CanonicalDataset
-    itself stays free of version branching.
+    Implemented once per format version (model/lerobot_v2.py, lerobot_v3.py) so
+    CanonicalDataset itself stays free of version branching.
     """
 
     def parquet_shard(self, episode: EpisodeRecord) -> pq.ParquetFile: ...
@@ -140,6 +140,7 @@ class CanonicalDataset:
     stats: StatsHandle
     _episodes: Sequence[EpisodeRecord]
     _resolver: ShardResolver
+    _frame_source_factory: Callable[[EpisodeRecord], FrameSource]
 
     @property
     def format_label(self) -> str:
@@ -162,3 +163,7 @@ class CanonicalDataset:
     def video_segment_for_episode(self, episode: EpisodeRecord, camera: str) -> VideoSegment:
         """Return a lazy handle to the video segment for *episode* on *camera*."""
         return self._resolver.video_segment(episode, camera)
+
+    def frame_source_for_episode(self, episode: EpisodeRecord) -> FrameSource:
+        """Return a format-neutral FrameSource for *episode*'s frame data."""
+        return self._frame_source_factory(episode)
