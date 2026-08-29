@@ -48,12 +48,11 @@ class _VersionDetectedCheck:
     thread_safe = True
 
     def run(self, ds: CanonicalDataset, ctx: CheckContext) -> CheckResult:
-        version_str = ds.version.value
         return CheckResult(
             check_id=self.id,
             severity=Severity.INFO,
-            message=f"Detected format version: {version_str}",
-            details={"version": version_str},
+            message=f"Detected format: {ds.format_label}",
+            details={"format_id": ds.format_id, "format_version": ds.format_version},
         )
 
 
@@ -426,9 +425,8 @@ class _OrphanShardCheck:
 
     def run(self, ds: CanonicalDataset, ctx: CheckContext) -> CheckResult:
         from trajlens.repair.orphan_shard_report import find_orphan_shards
-        from trajlens.sources.version import DatasetVersion
 
-        if ds.version is not DatasetVersion.V3_0:
+        if ds.format_id != "lerobot" or ds.format_version != "3.0":
             return CheckResult(
                 check_id=self.id,
                 severity=Severity.INFO,

@@ -277,9 +277,7 @@ class _PerEpisodeStatsMatchCheck:
                 ),
             )
 
-        from trajlens.sources.version import DatasetVersion
-
-        if ds.version is DatasetVersion.V2_0:
+        if ds.format_id == "lerobot" and ds.format_version == "2.0":
             return CheckResult(
                 check_id=self.id,
                 severity=Severity.INFO,
@@ -294,7 +292,7 @@ class _PerEpisodeStatsMatchCheck:
             accumulators = _stream_feature_columns(ds, episodes=[episode])
             ep_findings: list[str] = []
 
-            if ds.version is DatasetVersion.V3_0:
+            if ds.format_id == "lerobot" and ds.format_version == "3.0":
                 # Per-episode stats are inline in the episode metadata Parquet.
                 ep_stored = _load_v3_episode_stats(ds, episode.episode_index)
                 if ep_stored is None:
@@ -331,7 +329,7 @@ class _PerEpisodeStatsMatchCheck:
                             violations.append(finding)
                             ep_findings.append(finding)
 
-            elif ds.version is DatasetVersion.V2_1:
+            elif ds.format_id == "lerobot" and ds.format_version == "2.1":
                 # v2.1 episodes_stats.jsonl is loaded by the source layer;
                 # it's available in canonical form via the StatsHandle.
                 # For v2.1, per-episode stats are stored in episodes_stats.jsonl

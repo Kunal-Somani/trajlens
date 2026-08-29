@@ -180,7 +180,8 @@ def lint(
         typer.echo(
             render_json(
                 ref,
-                ds.version,
+                ds.format_id,
+                ds.format_version,
                 ds.num_episodes,
                 ds.num_frames,
                 results,
@@ -190,7 +191,8 @@ def lint(
     else:
         render_terminal(
             ref,
-            ds.version,
+            ds.format_id,
+            ds.format_version,
             ds.num_episodes,
             ds.num_frames,
             results,
@@ -202,16 +204,20 @@ def lint(
         sys.exit(0)
 
     if report is not None:
-        html = render_html(ref, ds.version, ds.num_episodes, ds.num_frames, results)
+        html = render_html(
+            ref, ds.format_id, ds.format_version, ds.num_episodes, ds.num_frames, results
+        )
         Path(report).write_text(html, encoding="utf-8")
 
     if sarif is not None:
-        sarif_doc = render_sarif(ref, ds.version, ds.num_episodes, ds.num_frames, results)
+        sarif_doc = render_sarif(
+            ref, ds.format_id, ds.format_version, ds.num_episodes, ds.num_frames, results
+        )
         Path(sarif).write_text(sarif_doc, encoding="utf-8")
 
     if share or share_out is not None:
         dataset_ref = handle.repo_id if handle.repo_id is not None else Path(ref).name
-        share_doc = render_share(ds.version, results, dataset_ref=dataset_ref)
+        share_doc = render_share(ds.format_id, ds.format_version, results, dataset_ref=dataset_ref)
         if share_out is not None:
             Path(share_out).write_text(share_doc, encoding="utf-8")
         else:

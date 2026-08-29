@@ -29,7 +29,6 @@ import json
 import trajlens
 from trajlens.checks.protocol import CheckResult, Severity
 from trajlens.report.trust_score import SCORE_FORMULA_VERSION, compute_trust_score
-from trajlens.sources.version import DatasetVersion
 
 _SARIF_SCHEMA = (
     "https://raw.githubusercontent.com/oasis-tcs/sarif-spec/main"
@@ -48,7 +47,8 @@ def _sarif_level(severity: Severity) -> str:
 
 def render_sarif(
     ref: str,
-    version: DatasetVersion,
+    format_id: str,
+    format_version: str,
     num_episodes: int,
     num_frames: int | None,
     results: list[CheckResult],
@@ -117,7 +117,8 @@ def render_sarif(
                 "results": sarif_results,
                 "properties": {
                     "dataset_ref": ref,
-                    "dataset_version": version.value,
+                    "dataset_format_id": format_id,
+                    "dataset_format_version": format_version,
                     "num_episodes": num_episodes,
                     "num_frames": num_frames,
                     "trust_score": score,

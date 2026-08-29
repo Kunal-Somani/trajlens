@@ -128,8 +128,10 @@ class TestLintJsonOutput:
         result = runner.invoke(app, ["lint", "--json", str(tmp_path)])
         data = json.loads(result.output)
         assert "ref" in data
-        assert "version" in data
-        assert data["version"] == "v3.0"
+        assert "format_id" in data
+        assert data["format_id"] == "lerobot"
+        assert "format_version" in data
+        assert data["format_version"] == "3.0"
         assert "score_formula_version" in data
         assert isinstance(data["trust_score"], int)
         assert isinstance(data["results"], list)

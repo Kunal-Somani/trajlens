@@ -25,7 +25,6 @@ from fastapi.testclient import TestClient
 
 from trajlens.checks.protocol import CheckResult, Severity
 from trajlens.report.json_report import render_json
-from trajlens.sources.version import DatasetVersion
 from trajlens.web.app import create_app
 
 _RESULTS = [
@@ -48,14 +47,14 @@ _EXPECTED_HEADERS = {
 
 
 def _client() -> TestClient:
-    report_json = render_json("some/dataset", DatasetVersion.V3_0, 3, 300, _RESULTS)
+    report_json = render_json("some/dataset", "lerobot", "3.0", 3, 300, _RESULTS)
     app = create_app(report_json)
     return TestClient(app)
 
 
 class TestApiReport:
     def test_report_matches_render_json_output(self) -> None:
-        report_json = render_json("some/dataset", DatasetVersion.V3_0, 3, 300, _RESULTS)
+        report_json = render_json("some/dataset", "lerobot", "3.0", 3, 300, _RESULTS)
         app = create_app(report_json)
         client = TestClient(app)
 
@@ -87,7 +86,7 @@ class TestApiReport:
                 per_episode={0: "episode 0 mismatch"},
             ),
         ]
-        report_json = render_json("some/dataset", DatasetVersion.V3_0, 3, 300, results)
+        report_json = render_json("some/dataset", "lerobot", "3.0", 3, 300, results)
         app = create_app(report_json)
         client = TestClient(app)
 
@@ -290,7 +289,7 @@ class TestDashboardXssInert:
                 details={"task": payload, "feature_name": payload},
             ),
         ]
-        report_json = render_json("hostile/dataset", DatasetVersion.V3_0, 1, 4, hostile_results)
+        report_json = render_json("hostile/dataset", "lerobot", "3.0", 1, 4, hostile_results)
         app = create_app(report_json)
         client = TestClient(app)
 
@@ -328,7 +327,7 @@ class TestDashboardXssInert:
                 per_episode={0: payload},
             ),
         ]
-        report_json = render_json("hostile/dataset", DatasetVersion.V3_0, 1, 4, hostile_results)
+        report_json = render_json("hostile/dataset", "lerobot", "3.0", 1, 4, hostile_results)
         app = create_app(report_json)
         client = TestClient(app)
 

@@ -11,7 +11,6 @@ import html
 
 from trajlens.checks.protocol import CheckResult, Severity
 from trajlens.report.trust_score import SCORE_FORMULA_VERSION, compute_trust_score
-from trajlens.sources.version import DatasetVersion
 
 _CSS = """
 body {
@@ -56,7 +55,8 @@ def _grade_label(worst: Severity) -> tuple[str, str]:
 
 def render_html(
     ref: str,
-    version: DatasetVersion,
+    format_id: str,
+    format_version: str,
     num_episodes: int,
     num_frames: int | None,
     results: list[CheckResult],
@@ -98,7 +98,7 @@ def render_html(
 <body>
 <h1>trajlens lint: {e(ref)}</h1>
 <p class="meta">
-  Version: {e(version.value)} &nbsp;|&nbsp;
+  Format: {e(format_id)} v{e(format_version)} &nbsp;|&nbsp;
   Episodes: {e(num_episodes)} &nbsp;|&nbsp;
   Frames: {e(num_frames)}
 </p>

@@ -34,7 +34,9 @@ def build_report_json(ref: str) -> str:
     ctx = CheckContext(deep=False)
     engine = CheckEngine(registry)
     results: list[CheckResult] = engine.run(ds, ctx)
-    return render_json(ref, ds.version, ds.num_episodes, ds.num_frames, results)
+    return render_json(
+        ref, ds.format_id, ds.format_version, ds.num_episodes, ds.num_frames, results
+    )
 
 
 def dashboard_url(port: int) -> str:
