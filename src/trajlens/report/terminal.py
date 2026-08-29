@@ -7,13 +7,15 @@ we declare it directly because we call its public API.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
+
 from rich.console import Console
 from rich.table import Table
 from rich.text import Text
 
 from trajlens.baseline import BaselineDiff
-from trajlens.checks.protocol import CheckResult, Severity
-from trajlens.report.trust_score import SCORE_FORMULA_VERSION, compute_trust_score
+from trajlens.checks.protocol import CheckResult, Severity, Tier
+from trajlens.report.trust_score import SCORE_FORMULA_VERSION, compute_trust_score, integrity_only
 
 
 def _severity_style(severity: Severity) -> str:
@@ -79,12 +81,18 @@ def render_terminal(
     console: Console | None = None,
     baseline_diff: BaselineDiff | None = None,
     show_unchanged: bool = False,
+    skipped_checks: Sequence[str] = (),
 ) -> None:
     """Print a color-coded lint report to the terminal.
 
     When baseline_diff is given, each result is prefixed with [NEW]
     (red), [RESOLVED] (green), or [UNCHANGED] (suppressed unless
     show_unchanged) instead of the plain per-finding listing.
+
+    Findings are grouped INTEGRITY tier first, then QUALITY tier (advisory,
+    never affects the trust score or grade). skipped_checks lists check_ids
+    the engine skipped due to format scope; a summary line is printed for
+    them when non-empty.
     """
     con = console or Console()
 
@@ -99,11 +107,28 @@ def render_terminal(
     if baseline_diff is not None:
         _render_baseline_findings(con, baseline_diff, show_unchanged=show_unchanged)
     elif results:
-        for result in results:
+        integrity_results = [r for r in results if r.tier is Tier.INTEGRITY]
+        quality_results = [r for r in results if r.tier is Tier.QUALITY]
+
+        for result in integrity_results:
             style = _severity_style(result.severity)
             label = _severity_label(result.severity)
             con.print(f"  [{style}]{label}[/{style}]  {result.check_id}")
             con.print(f"           {result.message}")
+
+        if quality_results:
+            con.print()
+            con.print("[bold]Quality findings (advisory — do not affect grade)[/bold]")
+            for result in quality_results:
+                style = _severity_style(result.severity)
+                label = _severity_label(result.severity)
+                con.print(f"  [{style}]{label}[/{style}]  {result.check_id}")
+                con.print(f"           {result.message}")
+
+        con.print()
+
+    if skipped_checks:
+        con.print(f"  {len(skipped_checks)} checks skipped (format scope)")
         con.print()
 
     counts: dict[Severity, int] = dict.fromkeys(Severity, 0)
@@ -120,7 +145,7 @@ def render_terminal(
     con.print()
 
     score = compute_trust_score(results)
-    worst = max((r.severity for r in results), default=Severity.INFO)
+    worst = max((r.severity for r in integrity_only(results)), default=Severity.INFO)
     grade_label, grade_style = _grade(worst)
 
     con.print(f"  Trust score : {score}/100  (formula v{SCORE_FORMULA_VERSION})")

@@ -435,7 +435,7 @@ class TestRoundTrip:
 
         engine = CheckEngine(registry)
         ds_source = _load(source)
-        pre_results = engine.run(ds_source, CTX)
+        pre_results = engine.run(ds_source, CTX).results
         pre_ids = {r.check_id for r in pre_results if r.severity >= Severity.WARN}
         assert CHECK_ID in pre_ids
 
@@ -443,7 +443,7 @@ class TestRoundTrip:
         fixer.apply(ds_source, output)
 
         ds_fixed = _load(output)
-        post_results = engine.run(ds_fixed, CTX)
+        post_results = engine.run(ds_fixed, CTX).results
         post_ids = {r.check_id for r in post_results if r.severity >= Severity.WARN}
 
         assert CHECK_ID not in post_ids, "STRUCTURAL.ORPHAN_SHARD must be clear after quarantine"
@@ -472,7 +472,7 @@ class TestNoFalsePositive:
         build_v3_real_video(source)
 
         engine = CheckEngine(registry)
-        results = engine.run(_load(source), CTX)
+        results = engine.run(_load(source), CTX).results
         orphan_result = next(r for r in results if r.check_id == CHECK_ID)
         assert orphan_result.severity == Severity.INFO
 

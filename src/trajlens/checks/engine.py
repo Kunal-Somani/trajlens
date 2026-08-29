@@ -66,6 +66,7 @@ from __future__ import annotations
 
 import os
 from concurrent.futures import ProcessPoolExecutor
+from dataclasses import dataclass, replace
 
 import structlog
 
@@ -103,6 +104,18 @@ _DATA_READING_CHECK_IDS: frozenset[str] = frozenset(
 )
 
 
+@dataclass(frozen=True, slots=True)
+class EngineResult:
+    """The outcome of one CheckEngine.run() call.
+
+    results — one CheckResult per check that actually ran.
+    skipped — check_ids skipped because check.formats excluded ds.format_id.
+    """
+
+    results: tuple[CheckResult, ...]
+    skipped: tuple[str, ...]
+
+
 def _run_check_in_worker(check: Check, ds: CanonicalDataset, ctx: CheckContext) -> CheckResult:
     """Run one check in a ProcessPoolExecutor worker, converting exceptions to ERROR.
 
@@ -111,7 +124,7 @@ def _run_check_in_worker(check: Check, ds: CanonicalDataset, ctx: CheckContext) 
     abort the run or surface as a bare traceback, and must never produce PASS.
     """
     try:
-        return check.run(ds, ctx)
+        return replace(check.run(ds, ctx), tier=check.tier)
     except Exception as exc:
         exc_type = type(exc).__name__
         return CheckResult(
@@ -119,6 +132,7 @@ def _run_check_in_worker(check: Check, ds: CanonicalDataset, ctx: CheckContext) 
             severity=Severity.ERROR,
             message=f"check raised unhandled exception in worker: {exc_type}: {exc}",
             details={"exc_type": exc_type, "exc_message": str(exc)},
+            tier=check.tier,
         )
 
 
@@ -143,10 +157,12 @@ class CheckEngine:
     """Selects applicable checks and runs them, collecting CheckResults.
 
     Selection criteria (applied in order):
-      1. Checks that require_video are skipped when the dataset has no cameras.
-      2. Checks that require_video and deep=False in ctx are skipped unless
+      1. Checks whose formats is not None and excludes ds.format_id are skipped
+         (recorded in EngineResult.skipped, not run at all).
+      2. Checks that require_video are skipped when the dataset has no cameras.
+      3. Checks that require_video and deep=False in ctx are skipped unless
          the check is in the non-deep video set (currently only DECODABLE_SPOTCHECK).
-      3. All other checks run unconditionally.
+      4. All other checks run unconditionally.
 
     ADR-003: any exception escaping a check's run() is caught here, logged,
     and converted to a CheckResult with severity=ERROR.  The exception type
@@ -156,10 +172,8 @@ class CheckEngine:
     def __init__(self, reg: CheckRegistry) -> None:
         self._registry = reg
 
-    def run(
-        self, ds: CanonicalDataset, ctx: CheckContext, *, parallel: int = 1
-    ) -> list[CheckResult]:
-        """Run all applicable checks; return one CheckResult per check.
+    def run(self, ds: CanonicalDataset, ctx: CheckContext, *, parallel: int = 1) -> EngineResult:
+        """Run all applicable checks; return one CheckResult per check that ran.
 
         parallel: number of worker processes. 1 (default) is fully serial and
         behaves exactly as before this option existed. Values >1 run
@@ -179,7 +193,13 @@ class CheckEngine:
         # occupy slots in between runnable entries.
         runnable: list[tuple[int, Check]] = []
         results: list[CheckResult | None] = []
+        skipped: list[str] = []
         for check in self._registry.all_checks():
+            if check.formats is not None and ds.format_id not in check.formats:
+                log.debug("check.skipped.format_scope", check_id=check.id)
+                skipped.append(check.id)
+                continue
+
             if check.requires_video and not has_video:
                 log.debug("check.skipped.no_video", check_id=check.id)
                 continue
@@ -193,6 +213,7 @@ class CheckEngine:
                         f"_MAX_SHARD_ROWS={_MAX_SHARD_ROWS}; skipping to prevent "
                         f"allocation bomb"
                     ),
+                    tier=check.tier,
                 )
                 log.error(
                     "check.skipped.oversized_shard",
@@ -224,7 +245,7 @@ class CheckEngine:
                 message=maybe_result.message,
             )
 
-        return final_results
+        return EngineResult(results=tuple(final_results), skipped=tuple(skipped))
 
     def _run_parallel(
         self,
@@ -263,7 +284,7 @@ class CheckEngine:
     def _run_one(self, check: Check, ds: CanonicalDataset, ctx: CheckContext) -> CheckResult:
         """Run a single check, converting any exception to an ERROR result (ADR-003)."""
         try:
-            return check.run(ds, ctx)
+            return replace(check.run(ds, ctx), tier=check.tier)
         except Exception as exc:
             exc_type = type(exc).__name__
             log.error(
@@ -280,4 +301,5 @@ class CheckEngine:
                     f"This is a trajlens bug; please report it."
                 ),
                 details={"exc_type": exc_type, "exc_message": str(exc)},
+                tier=check.tier,
             )

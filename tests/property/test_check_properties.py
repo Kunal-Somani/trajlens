@@ -44,7 +44,7 @@ def test_clean_dataset_passes_all_non_video_checks(
     engine = CheckEngine(registry)
     ctx = CheckContext(deep=False)
 
-    results = engine.run(ds, ctx)
+    results = engine.run(ds, ctx).results
     non_video_results = [r for r in results if not r.check_id.startswith("VIDEO.")]
 
     worst = max((r.severity for r in non_video_results), default=Severity.INFO)

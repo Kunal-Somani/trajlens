@@ -12,7 +12,7 @@ import pytest
 
 from tests.fixtures.builders import build_v3_dataset
 from trajlens.checks.engine import CheckEngine
-from trajlens.checks.protocol import Check, CheckContext, CheckResult, Severity
+from trajlens.checks.protocol import Check, CheckContext, CheckResult, Severity, Tier
 from trajlens.checks.registry import CheckRegistry
 from trajlens.checks.registry import registry as global_registry
 from trajlens.model import build_canonical_dataset
@@ -41,6 +41,8 @@ class _CrashingCheck:
     category = "TEST"
     requires_video = False
     thread_safe = True
+    tier = Tier.INTEGRITY
+    formats: frozenset[str] | None = None
 
     def run(self, ds: Any, ctx: Any) -> CheckResult:
         raise RuntimeError("intentional crash for --parallel worker-exception test")
@@ -52,6 +54,8 @@ class _SerialOnlyCheck:
     category = "TEST"
     requires_video = False
     thread_safe = False
+    tier = Tier.INTEGRITY
+    formats: frozenset[str] | None = None
 
     def run(self, ds: Any, ctx: Any) -> CheckResult:
         return CheckResult(
@@ -74,8 +78,8 @@ class TestDeterminism:
         ds = _load(tmp_path)
         engine = CheckEngine(global_registry)
 
-        serial_results = engine.run(ds, CTX, parallel=1)
-        parallel_results = engine.run(ds, CTX, parallel=2)
+        serial_results = engine.run(ds, CTX, parallel=1).results
+        parallel_results = engine.run(ds, CTX, parallel=2).results
 
         serial_set = {(r.check_id, r.severity) for r in serial_results}
         parallel_set = {(r.check_id, r.severity) for r in parallel_results}
@@ -97,7 +101,7 @@ class TestWorkerException:
         reg.register(SCALE_CRASH)
         engine = CheckEngine(reg)
 
-        results = engine.run(ds, CTX, parallel=2)
+        results = engine.run(ds, CTX, parallel=2).results
 
         assert len(results) == 1
         assert results[0].check_id == "TEST.SCALE_CRASH"
@@ -119,8 +123,8 @@ class TestThreadSafeFallback:
         reg.register(SCALE_SERIAL_ONLY)
         engine = CheckEngine(reg)
 
-        serial_results = engine.run(ds, CTX, parallel=1)
-        parallel_results = engine.run(ds, CTX, parallel=4)
+        serial_results = engine.run(ds, CTX, parallel=1).results
+        parallel_results = engine.run(ds, CTX, parallel=4).results
 
         assert len(parallel_results) == 1
         assert parallel_results[0].check_id == "TEST.SCALE_SERIAL_ONLY"
@@ -147,7 +151,7 @@ class TestAllocationBombCeiling:
         ds = _load(tmp_path)
         engine = CheckEngine(global_registry)
 
-        results = engine.run(ds, CTX)
+        results = engine.run(ds, CTX).results
 
         from trajlens.checks.engine import _DATA_READING_CHECK_IDS
 
@@ -167,6 +171,6 @@ class TestAllocationBombCeiling:
         ds = _load(tmp_path)
         engine = CheckEngine(global_registry)
 
-        results = engine.run(ds, CTX)
+        results = engine.run(ds, CTX).results
 
         assert all("_MAX_SHARD_ROWS" not in r.message for r in results)

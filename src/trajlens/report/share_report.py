@@ -16,7 +16,7 @@ import json
 import trajlens
 from trajlens.checks.protocol import CheckResult, Severity
 from trajlens.report.episodes import worst_episodes
-from trajlens.report.trust_score import SCORE_FORMULA_VERSION, compute_trust_score
+from trajlens.report.trust_score import SCORE_FORMULA_VERSION, compute_trust_score, integrity_only
 
 
 def _grade(worst: Severity) -> str:
@@ -44,7 +44,7 @@ def render_share(
     pass the Hub repo id (full `org/name`) for Hub refs, or the basename only
     -- never any parent path component -- for local paths.
     """
-    worst = max((r.severity for r in results), default=Severity.INFO)
+    worst = max((r.severity for r in integrity_only(results)), default=Severity.INFO)
     score = compute_trust_score(results)
 
     finding_counts: dict[str, int] = {}

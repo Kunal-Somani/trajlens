@@ -20,14 +20,19 @@ Severity mapping to SARIF levels:
   FAIL  -> "error"   (unsafe to train on)
   WARN  -> "warning"
   INFO  -> "note"
+
+QUALITY findings map to SARIF level 'note' regardless of their Severity
+because SARIF has no tier concept and a CI gate must not fail on advisory
+quality findings. The tier is preserved in each finding's properties bag.
 """
 
 from __future__ import annotations
 
 import json
+from collections.abc import Sequence
 
 import trajlens
-from trajlens.checks.protocol import CheckResult, Severity
+from trajlens.checks.protocol import CheckResult, Severity, Tier
 from trajlens.report.trust_score import SCORE_FORMULA_VERSION, compute_trust_score
 
 _SARIF_SCHEMA = (
@@ -52,11 +57,14 @@ def render_sarif(
     num_episodes: int,
     num_frames: int | None,
     results: list[CheckResult],
+    *,
+    skipped_checks: Sequence[str] = (),
 ) -> str:
     """Return a SARIF 2.1.0 JSON string for the lint results.
 
     The returned string is valid SARIF 2.1.0 and is accepted by the
-    GitHub Code Scanning upload action (upload-sarif).
+    GitHub Code Scanning upload action (upload-sarif). skipped_checks lists
+    check_ids the engine skipped due to format scope.
     """
     score = compute_trust_score(results)
 
@@ -84,7 +92,7 @@ def render_sarif(
     sarif_results = [
         {
             "ruleId": r.check_id,
-            "level": _sarif_level(r.severity),
+            "level": ("note" if r.tier is Tier.QUALITY else _sarif_level(r.severity)),
             "message": {"text": r.message},
             "locations": [
                 {
@@ -97,6 +105,7 @@ def render_sarif(
                     }
                 }
             ],
+            "properties": {"tier": r.tier.value},
         }
         for r in results
     ]
@@ -123,6 +132,7 @@ def render_sarif(
                     "num_frames": num_frames,
                     "trust_score": score,
                     "score_formula_version": SCORE_FORMULA_VERSION,
+                    "skipped_checks": list(skipped_checks),
                 },
             }
         ],

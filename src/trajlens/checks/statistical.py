@@ -43,7 +43,7 @@ import math
 
 import structlog
 
-from trajlens.checks.protocol import Check, CheckContext, CheckResult, Severity
+from trajlens.checks.protocol import Check, CheckContext, CheckResult, Severity, Tier
 from trajlens.checks.registry import registry
 from trajlens.checks.welford import WelfordAccumulator
 from trajlens.model.canonical import CanonicalDataset
@@ -131,6 +131,8 @@ class _StatsMatchDataCheck:
     category = "STATISTICAL"
     requires_video = False
     thread_safe = True
+    tier: Tier = Tier.INTEGRITY
+    formats: frozenset[str] | None = None
 
     def run(self, ds: CanonicalDataset, ctx: CheckContext) -> CheckResult:
         resolver_handle = getattr(ds._resolver, "handle", None)
@@ -260,6 +262,8 @@ class _PerEpisodeStatsMatchCheck:
     category = "STATISTICAL"
     requires_video = False
     thread_safe = True
+    tier: Tier = Tier.INTEGRITY
+    formats: frozenset[str] | None = None
 
     def run(self, ds: CanonicalDataset, ctx: CheckContext) -> CheckResult:
         resolver_handle = getattr(ds._resolver, "handle", None)
@@ -513,6 +517,8 @@ class _ValueSanityCheck:
     category = "STATISTICAL"
     requires_video = False
     thread_safe = True
+    tier: Tier = Tier.INTEGRITY
+    formats: frozenset[str] | None = None
 
     def run(self, ds: CanonicalDataset, ctx: CheckContext) -> CheckResult:
         resolver_handle = getattr(ds._resolver, "handle", None)

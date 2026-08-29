@@ -47,7 +47,7 @@ def _load(root: Path):  # type: ignore[no-untyped-def]
 
 
 def _lint(ds):  # type: ignore[no-untyped-def]
-    return CheckEngine(registry).run(ds, CTX)
+    return CheckEngine(registry).run(ds, CTX).results
 
 
 def _build_dangling_task_index(root: Path) -> None:

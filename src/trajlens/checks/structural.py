@@ -26,7 +26,7 @@ from __future__ import annotations
 import pyarrow as pa
 import structlog
 
-from trajlens.checks.protocol import Check, CheckContext, CheckResult, Severity
+from trajlens.checks.protocol import Check, CheckContext, CheckResult, Severity, Tier
 from trajlens.checks.registry import registry
 from trajlens.checks.utils import ShardColumnCache
 from trajlens.model.canonical import CanonicalDataset
@@ -46,6 +46,8 @@ class _VersionDetectedCheck:
     category = "STRUCTURAL"
     requires_video = False
     thread_safe = True
+    tier: Tier = Tier.INTEGRITY
+    formats: frozenset[str] | None = None
 
     def run(self, ds: CanonicalDataset, ctx: CheckContext) -> CheckResult:
         return CheckResult(
@@ -85,6 +87,8 @@ class _SchemaConsistencyCheck:
     category = "STRUCTURAL"
     requires_video = False
     thread_safe = True
+    tier: Tier = Tier.INTEGRITY
+    formats: frozenset[str] | None = None
 
     def run(self, ds: CanonicalDataset, ctx: CheckContext) -> CheckResult:
         mismatches: list[str] = []
@@ -168,6 +172,8 @@ class _IndexContinuityCheck:
     category = "STRUCTURAL"
     requires_video = False
     thread_safe = True
+    tier: Tier = Tier.INTEGRITY
+    formats: frozenset[str] | None = None
 
     def run(self, ds: CanonicalDataset, ctx: CheckContext) -> CheckResult:
         if "frame_index" not in ds.features:
@@ -259,6 +265,8 @@ class _MetadataDataAgreementCheck:
     category = "STRUCTURAL"
     requires_video = False
     thread_safe = True
+    tier: Tier = Tier.INTEGRITY
+    formats: frozenset[str] | None = None
 
     def run(self, ds: CanonicalDataset, ctx: CheckContext) -> CheckResult:
         violations: list[str] = []
@@ -349,6 +357,8 @@ class _PathTemplateResolvesCheck:
     category = "STRUCTURAL"
     requires_video = False
     thread_safe = True
+    tier: Tier = Tier.INTEGRITY
+    formats: frozenset[str] | None = None
 
     def run(self, ds: CanonicalDataset, ctx: CheckContext) -> CheckResult:
         root = ds.stats.root
@@ -422,6 +432,8 @@ class _OrphanShardCheck:
     category = "STRUCTURAL"
     requires_video = False
     thread_safe = True
+    tier: Tier = Tier.INTEGRITY
+    formats: frozenset[str] | None = None
 
     def run(self, ds: CanonicalDataset, ctx: CheckContext) -> CheckResult:
         from trajlens.repair.orphan_shard_report import find_orphan_shards

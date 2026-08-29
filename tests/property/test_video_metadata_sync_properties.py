@@ -48,7 +48,7 @@ def test_repair_converges_and_introduces_no_new_findings(
         return
 
     engine = CheckEngine(registry)
-    pre_results = engine.run(ds_source, CTX)
+    pre_results = engine.run(ds_source, CTX).results
     pre_fail_ids = {r.check_id for r in pre_results if r.severity >= Severity.WARN}
 
     fixer.apply(ds_source, output)
@@ -62,7 +62,7 @@ def test_repair_converges_and_introduces_no_new_findings(
         f"(declared_fps={declared_fps}, container_fps={container_fps})"
     )
 
-    post_results = engine.run(ds_fixed, CTX)
+    post_results = engine.run(ds_fixed, CTX).results
     post_fail_ids = {r.check_id for r in post_results if r.severity >= Severity.WARN}
     new_findings = post_fail_ids - pre_fail_ids
     assert not new_findings, (
