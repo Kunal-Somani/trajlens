@@ -24,18 +24,20 @@ from tests.fixtures.builders import (
     build_v3_timestamp_drift,
 )
 from trajlens.checks import CheckEngine, registry
-from trajlens.checks.protocol import CheckContext
+from trajlens.checks.protocol import CheckContext, CheckResult, Severity
 from trajlens.errors import RepairError
-from trajlens.model import build_canonical_dataset
+from trajlens.model import CanonicalDataset, build_canonical_dataset
 from trajlens.repair.orchestrator import (
     ALL_FIXER_IDS,
     build_fixer_order,
+    plan,
     refuse_if_hub_ref,
     run_apply,
     run_dry_run,
     select_applicable_fixers,
     validate_fixer_selection,
 )
+from trajlens.repair.protocol import Diff, RepairSummary
 from trajlens.sources.loader import SourceLoader
 
 CTX = CheckContext(deep=False)
@@ -419,3 +421,68 @@ class TestOnlyExceptSelection:
         assert orphan_outcome.summary is not None
         assert orphan_outcome.summary.changes_written == 0
         assert not (out / ".trajlens-quarantine").exists()
+
+
+class _RLDSOnlyFixer:
+    """A synthetic fixer targeting a real check_id but unable to write "lerobot".
+
+    Exists only to exercise plan()'s DETECTED_NOT_WRITABLE branch without
+    needing a second real FormatAdapter -- dry_run/apply must never be
+    called for a fixer plan() has already excluded on writable_formats.
+    """
+
+    fixer_id = "REPAIR.FAKE_RLDS_ONLY"
+    check_id = "STRUCTURAL.METADATA_DATA_AGREEMENT"
+    writable_formats: frozenset[str] = frozenset({"rlds"})
+
+    def dry_run(self, ds: CanonicalDataset) -> Diff:
+        raise AssertionError("dry_run must not be called for a DETECTED_NOT_WRITABLE fixer")
+
+    def apply(self, ds: CanonicalDataset, output_path: Path) -> RepairSummary:
+        raise AssertionError("apply must not be called for a DETECTED_NOT_WRITABLE fixer")
+
+
+class TestPlanThreeState:
+    def test_three_state_plan_repairable(self, tmp_path: Path) -> None:
+        build_v3_metadata_data_disagreement(tmp_path, num_episodes=3)
+        ds = _load(tmp_path)
+        results = _lint(ds)
+
+        repair_plan = plan(ds, results)
+
+        repairable_check_ids = {f.check_id for f in repair_plan.repairable}
+        assert "STRUCTURAL.METADATA_DATA_AGREEMENT" in repairable_check_ids
+        reindex = next(
+            f for f in repair_plan.repairable if f.check_id == "STRUCTURAL.METADATA_DATA_AGREEMENT"
+        )
+        assert reindex.fixer_id == "REPAIR.EPISODE_REINDEX"
+        assert "STRUCTURAL.METADATA_DATA_AGREEMENT" not in repair_plan.detected_not_writable
+        assert "STRUCTURAL.METADATA_DATA_AGREEMENT" not in repair_plan.no_fixer
+
+    def test_three_state_plan_detected_not_writable(self, tmp_path: Path) -> None:
+        build_v3_metadata_data_disagreement(tmp_path, num_episodes=3)
+        ds = _load(tmp_path)
+        results = _lint(ds)
+
+        repair_plan = plan(ds, results, fixer_order=(_RLDSOnlyFixer(),))
+
+        assert repair_plan.detected_not_writable == ("STRUCTURAL.METADATA_DATA_AGREEMENT",)
+        assert repair_plan.repairable == ()
+        assert "STRUCTURAL.METADATA_DATA_AGREEMENT" not in repair_plan.no_fixer
+
+    def test_three_state_plan_no_fixer(self, tmp_path: Path) -> None:
+        build_v3_dataset(tmp_path, num_episodes=3)
+        ds = _load(tmp_path)
+        results = [
+            CheckResult(
+                check_id="STRUCTURAL.NO_FIXER_TARGETS_THIS",
+                severity=Severity.FAIL,
+                message="synthetic finding with no registered fixer",
+            )
+        ]
+
+        repair_plan = plan(ds, results)
+
+        assert repair_plan.no_fixer == ("STRUCTURAL.NO_FIXER_TARGETS_THIS",)
+        assert repair_plan.repairable == ()
+        assert repair_plan.detected_not_writable == ()
