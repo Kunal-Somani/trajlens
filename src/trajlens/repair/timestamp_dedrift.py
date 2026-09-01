@@ -83,6 +83,7 @@ class TimestampDedriftFixer:
 
     fixer_id: str = FIXER_ID
     check_id: str = CHECK_ID
+    writable_formats: frozenset[str] = frozenset({"lerobot"})
 
     def dry_run(self, ds: CanonicalDataset) -> Diff:
         """Compute what would change without writing anything.
