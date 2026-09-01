@@ -22,8 +22,16 @@ JSON schema:
         "changes_written": int | null
       },
       ...
-    ]
+    ],
+    "detected_not_writable": [str, ...],  # check_ids with a fixer that cannot
+                                           # write this dataset's format
+    "no_fixer": [str, ...]                # check_ids with no fixer at all
   }
+
+detected_not_writable/no_fixer come from a RepairPlan (repair/orchestrator.py's
+plan()), passed in separately from the FixPlan that drives "fixers" -- they
+default to empty lists when no RepairPlan is given, so the schema is stable
+whether or not a caller has computed one.
 """
 
 from __future__ import annotations
@@ -32,7 +40,7 @@ import json
 
 from rich.console import Console
 
-from trajlens.repair.orchestrator import FixPlan
+from trajlens.repair.orchestrator import FixPlan, RepairPlan
 from trajlens.repair.protocol import BoundaryChange, FeatureFieldChange, FrameChange, StatChange
 
 
@@ -59,8 +67,16 @@ def render_fix_terminal(
     plan: FixPlan,
     *,
     console: Console | None = None,
+    repair_plan: RepairPlan | None = None,
+    format_id: str | None = None,
 ) -> None:
-    """Print a color-coded fix report (dry-run diff or applied summary)."""
+    """Print a color-coded fix report (dry-run diff or applied summary).
+
+    repair_plan/format_id, when given, additionally render the
+    DETECTED_NOT_WRITABLE and NO_FIXER sections (repair/protocol.py's
+    Repairability) after the REPAIRABLE outcomes above -- distinct, honest
+    states rather than folding them into "no applicable fixers".
+    """
     con = console or Console()
     mode = "apply" if plan.applied else "dry-run"
 
@@ -71,45 +87,65 @@ def render_fix_terminal(
     if not plan.outcomes:
         con.print("  [green]No applicable fixers — nothing to fix.[/green]")
         con.print()
-        return
-
-    if not plan.applicable:
+    elif not plan.applicable:
         con.print("  [green]All applicable fixers report the dataset is already clean.[/green]")
         con.print("  Nothing to fix.")
         con.print()
-        return
-
-    for outcome in plan.outcomes:
-        if outcome.diff.is_noop:
-            con.print(
-                f"  [green]OK[/green]     {outcome.fixer_id} ({outcome.check_id}): "
-                "no changes needed"
-            )
-            continue
-
-        verb = "applied" if outcome.summary is not None else "would change"
-        con.print(
-            f"  [yellow]CHANGE[/yellow] {outcome.fixer_id} ({outcome.check_id}): "
-            f"{len(outcome.diff.changes)} change(s) {verb}"
-        )
-        preview = outcome.diff.changes[:5]
-        for change in preview:
-            con.print(f"           {_change_summary(change)}")
-        remaining = len(outcome.diff.changes) - len(preview)
-        if remaining > 0:
-            con.print(f"           ... and {remaining} more")
-
-    con.print()
-    if plan.applied:
-        con.print(f"  Repaired dataset written to: {plan.output_path}")
     else:
-        con.print("  Dry run only — nothing was written.")
-        con.print("  Re-run with --apply --out <path> to write.")
-    con.print()
+        for outcome in plan.outcomes:
+            if outcome.diff.is_noop:
+                con.print(
+                    f"  [green]OK[/green]     {outcome.fixer_id} ({outcome.check_id}): "
+                    "no changes needed"
+                )
+                continue
+
+            verb = "applied" if outcome.summary is not None else "would change"
+            con.print(
+                f"  [yellow]CHANGE[/yellow] {outcome.fixer_id} ({outcome.check_id}): "
+                f"{len(outcome.diff.changes)} change(s) {verb}"
+            )
+            preview = outcome.diff.changes[:5]
+            for change in preview:
+                con.print(f"           {_change_summary(change)}")
+            remaining = len(outcome.diff.changes) - len(preview)
+            if remaining > 0:
+                con.print(f"           ... and {remaining} more")
+
+        con.print()
+        if plan.applied:
+            con.print(f"  Repaired dataset written to: {plan.output_path}")
+        else:
+            con.print("  Dry run only — nothing was written.")
+            con.print("  Re-run with --apply --out <path> to write.")
+        con.print()
+
+    if repair_plan is not None:
+        _render_repair_plan_terminal(con, repair_plan, format_id)
 
 
-def render_fix_json(ref: str, plan: FixPlan) -> str:
-    """Return a JSON string representing the fix report."""
+def _render_repair_plan_terminal(
+    con: Console, repair_plan: RepairPlan, format_id: str | None
+) -> None:
+    if repair_plan.detected_not_writable:
+        con.print("[dim]Detected, not auto-repairable:[/dim]")
+        for check_id in repair_plan.detected_not_writable:
+            con.print(f"  [dim]{check_id}: detected — not auto-repairable in {format_id} yet[/dim]")
+        con.print()
+
+    if repair_plan.no_fixer:
+        con.print("No fixer available:")
+        for check_id in repair_plan.no_fixer:
+            con.print(f"  {check_id}: no fixer exists for this finding")
+        con.print()
+
+
+def render_fix_json(ref: str, plan: FixPlan, *, repair_plan: RepairPlan | None = None) -> str:
+    """Return a JSON string representing the fix report.
+
+    detected_not_writable/no_fixer default to empty lists when repair_plan is
+    not given, so the schema is stable either way.
+    """
     payload: dict[str, object] = {
         "ref": ref,
         "dry_run": not plan.applied,
@@ -131,6 +167,10 @@ def render_fix_json(ref: str, plan: FixPlan) -> str:
             }
             for outcome in plan.outcomes
         ],
+        "detected_not_writable": (
+            list(repair_plan.detected_not_writable) if repair_plan is not None else []
+        ),
+        "no_fixer": list(repair_plan.no_fixer) if repair_plan is not None else [],
     }
     return json.dumps(payload, indent=2)
 
