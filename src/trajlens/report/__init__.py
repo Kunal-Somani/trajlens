@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from trajlens.report.fix_report import render_fix_json, render_fix_json_error, render_fix_terminal
-from trajlens.report.html_report import render_html
+from trajlens.report.html_report import render_fix_html, render_html
 from trajlens.report.json_report import render_json, render_json_load_error
 from trajlens.report.sarif import render_sarif
 from trajlens.report.share_report import render_share
@@ -13,6 +13,7 @@ from trajlens.report.trust_score import SCORE_FORMULA_VERSION, compute_trust_sco
 __all__ = [
     "SCORE_FORMULA_VERSION",
     "compute_trust_score",
+    "render_fix_html",
     "render_fix_json",
     "render_fix_json_error",
     "render_fix_terminal",

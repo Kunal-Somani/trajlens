@@ -154,6 +154,78 @@ class FixPlan:
     applied: bool
 
 
+@dataclass(frozen=True, slots=True)
+class PlannedFix:
+    """One finding classified REPAIRABLE by plan(): a fixer exists and can write ds.format_id.
+
+    fixer_id / check_id — identify the fixer and the finding it targets.
+    diff                 — the Diff computed by dry_run() against ds, so
+                           report renderers can show the planned change
+                           without a second pass over the dataset.
+    """
+
+    fixer_id: str
+    check_id: str
+    diff: Diff
+
+
+@dataclass(frozen=True, slots=True)
+class RepairPlan:
+    """Three-way classification of every WARN+ finding in a lint run (M1-D).
+
+    repairable             — a fixer exists and can write ds.format_id.
+    detected_not_writable  — check_ids with a fixer whose writable_formats
+                              excludes ds.format_id.
+    no_fixer                — check_ids with no fixer targeting them at all.
+
+    See repair/protocol.py's Repairability enum for the same three states.
+    """
+
+    repairable: tuple[PlannedFix, ...]
+    detected_not_writable: tuple[str, ...]
+    no_fixer: tuple[str, ...]
+
+
+def plan(
+    ds: CanonicalDataset,
+    results: list[CheckResult],
+    *,
+    fixer_order: tuple[Fixer, ...] = _FIXER_ORDER,
+) -> RepairPlan:
+    """Classify every WARN+ finding as REPAIRABLE, DETECTED_NOT_WRITABLE, or NO_FIXER.
+
+    Mirrors select_applicable_fixers's WARN+ threshold for "this finding is
+    present", then additionally checks each matching fixer's writable_formats
+    against ds.format_id -- the distinction select_applicable_fixers itself
+    does not make (it is only ever called today against ds's own format,
+    which happens to always be writable, so this check has been silently
+    absent from fixer selection until now).
+    """
+    fixers_by_check_id = {fixer.check_id: fixer for fixer in fixer_order}
+    fired_check_ids = sorted({r.check_id for r in results if r.severity >= Severity.WARN})
+
+    repairable: list[PlannedFix] = []
+    detected_not_writable: list[str] = []
+    no_fixer: list[str] = []
+
+    for check_id in fired_check_ids:
+        fixer = fixers_by_check_id.get(check_id)
+        if fixer is None:
+            no_fixer.append(check_id)
+        elif ds.format_id in fixer.writable_formats:
+            repairable.append(
+                PlannedFix(fixer_id=fixer.fixer_id, check_id=check_id, diff=fixer.dry_run(ds))
+            )
+        else:
+            detected_not_writable.append(check_id)
+
+    return RepairPlan(
+        repairable=tuple(repairable),
+        detected_not_writable=tuple(detected_not_writable),
+        no_fixer=tuple(no_fixer),
+    )
+
+
 def select_applicable_fixers(
     results: list[CheckResult],
     *,

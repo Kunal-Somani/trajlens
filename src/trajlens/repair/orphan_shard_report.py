@@ -180,6 +180,7 @@ class OrphanShardReportFixer:
 
     fixer_id: str = FIXER_ID
     check_id: str = CHECK_ID
+    writable_formats: frozenset[str] = frozenset({"lerobot"})
 
     def __init__(self, *, quarantine: bool = False) -> None:
         self.quarantine = quarantine

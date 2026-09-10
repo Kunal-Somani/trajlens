@@ -299,15 +299,21 @@ def fix(
 
     A fixer may report no-op if an earlier repair already resolved its finding.
 
-    Exit codes:
-      0 = nothing to fix (dataset already agrees with data for every
-          applicable check)
-      1 = fixes proposed (dry-run) or applied (--apply) successfully
-      2 = could not fix: dataset failed to load, invalid usage (--apply
-          without --out, --out same as the source, or an invalid/conflicting
-          --only/--except selection), or a fixer refused to repair
-          (RepairError) because the underlying data is itself internally
-          inconsistent
+    Exit codes (M1-D: gated on RepairPlan.repairable -- see
+    repair/orchestrator.py's plan() and repair/protocol.py's Repairability --
+    never on DETECTED_NOT_WRITABLE or NO_FIXER findings, which are reported
+    but do not affect the exit code):
+      0 = every REPAIRABLE finding was applied (--apply) or previewed
+          (dry-run) successfully
+      1 = at least one REPAIRABLE finding failed to apply (a fixer raised
+          RepairError because the underlying data is itself internally
+          inconsistent)
+      2 = no REPAIRABLE findings existed (nothing to repair), or the run
+          could not start at all: dataset failed to load, or invalid usage
+          (--apply without --out, --out same as the source, or an
+          invalid/conflicting --only/--except selection)
+    Future maintainers: do not change these codes' meaning silently -- other
+    tooling (CI gates, scripts) depends on the 0/1/2 split above.
     """
     import sys
     from pathlib import Path
@@ -322,6 +328,7 @@ def fix(
         run_dry_run,
         validate_fixer_selection,
     )
+    from trajlens.repair.orchestrator import plan as compute_repair_plan
     from trajlens.report import render_fix_json, render_fix_json_error, render_fix_terminal
     from trajlens.sources.loader import SourceLoader
 
@@ -371,13 +378,18 @@ def fix(
     fixer_order = build_fixer_order(quarantine=quarantine)
 
     try:
+        # plan()'s dry_run() calls for each REPAIRABLE finding can themselves
+        # raise RepairError (e.g. episode_reindex refusing interleaved data),
+        # so it shares this try/except with run_dry_run/run_apply below rather
+        # than running unguarded.
+        repair_plan = compute_repair_plan(ds, results, fixer_order=fixer_order)
         if dry_run:
-            plan = run_dry_run(
+            fix_plan = run_dry_run(
                 ds, results, fixer_order=fixer_order, only=only_ids, except_=except_ids
             )
         else:
             assert out is not None  # guarded above
-            plan = run_apply(
+            fix_plan = run_apply(
                 ds, results, Path(out), fixer_order=fixer_order, only=only_ids, except_=except_ids
             )
     except RepairError as exc:
@@ -385,14 +397,14 @@ def fix(
             typer.echo(render_fix_json_error(ref, type(exc).__name__, str(exc)))
         else:
             typer.echo(f"ERROR: Could not repair {ref!r}: {exc}", err=True)
-        raise typer.Exit(code=2) from exc
+        raise typer.Exit(code=1) from exc
 
     if json_output:
-        typer.echo(render_fix_json(ref, plan))
+        typer.echo(render_fix_json(ref, fix_plan, repair_plan=repair_plan))
     else:
-        render_fix_terminal(ref, plan)
+        render_fix_terminal(ref, fix_plan, repair_plan=repair_plan, format_id=ds.format_id)
 
-    sys.exit(1 if plan.applicable else 0)
+    sys.exit(0 if repair_plan.repairable else 2)
 
 
 @app.command()

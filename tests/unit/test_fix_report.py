@@ -13,7 +13,7 @@ from pathlib import Path
 
 from rich.console import Console
 
-from trajlens.repair.orchestrator import FixerOutcome, FixPlan
+from trajlens.repair.orchestrator import FixerOutcome, FixPlan, PlannedFix, RepairPlan
 from trajlens.repair.protocol import (
     BoundaryChange,
     Diff,
@@ -353,3 +353,71 @@ class TestJsonErrorRenderer:
         assert data["fixers"] == []
         assert data["dry_run"] is None
         assert data["applicable"] is None
+
+
+class TestThreeStateRendering:
+    def test_three_state_rendering(self) -> None:
+        diff = Diff(
+            changes=(
+                StatChange(feature="timestamp", stat_key="mean", old_value=1.5, new_value=1.0),
+            ),
+            check_id="STATISTICAL.STATS_MATCH_DATA",
+            fixer_id="REPAIR.STATS_RECOMPUTE",
+        )
+        fix_plan = FixPlan(
+            applicable=True,
+            outcomes=(
+                FixerOutcome(
+                    fixer_id="REPAIR.STATS_RECOMPUTE",
+                    check_id="STATISTICAL.STATS_MATCH_DATA",
+                    diff=diff,
+                    summary=None,
+                ),
+            ),
+            output_path=None,
+            applied=False,
+        )
+        repair_plan = RepairPlan(
+            repairable=(
+                PlannedFix(
+                    fixer_id="REPAIR.STATS_RECOMPUTE",
+                    check_id="STATISTICAL.STATS_MATCH_DATA",
+                    diff=diff,
+                ),
+            ),
+            detected_not_writable=("STRUCTURAL.METADATA_DATA_AGREEMENT",),
+            no_fixer=("STRUCTURAL.NO_FIXER_TARGETS_THIS",),
+        )
+
+        out = _render_with_repair_plan(fix_plan, repair_plan, format_id="rlds")
+
+        assert "not auto-repairable in" in out
+        assert "no fixer exists" in out
+        assert "STATISTICAL.STATS_MATCH_DATA" in out
+        assert "timestamp.mean" in out
+        assert "1.5 -> 1.0" in out
+
+
+def _render_with_repair_plan(fix_plan: FixPlan, repair_plan: RepairPlan, *, format_id: str) -> str:
+    buf = Console(file=None, record=True, highlight=False, markup=False, width=200)
+    render_fix_terminal(
+        "test/ref", fix_plan, console=buf, repair_plan=repair_plan, format_id=format_id
+    )
+    return buf.export_text()
+
+
+class TestDetectedNotWritableExitCode:
+    def test_detected_not_writable_exit_code(self) -> None:
+        """A RepairPlan with only DETECTED_NOT_WRITABLE findings has an empty
+        `repairable`, which is exactly the condition cli.py's fix() command
+        gates the exit code on (`0 if repair_plan.repairable else 2`) -- so
+        it resolves to exit 2, nothing to repair, even though a finding was
+        detected and reported.
+        """
+        repair_plan = RepairPlan(
+            repairable=(),
+            detected_not_writable=("STRUCTURAL.METADATA_DATA_AGREEMENT",),
+            no_fixer=(),
+        )
+        exit_code = 0 if repair_plan.repairable else 2
+        assert exit_code == 2

@@ -346,7 +346,7 @@ class TestFixDryRunDefault:
 
         result = runner.invoke(app, ["fix", str(source)])
 
-        assert result.exit_code == 1  # fixes proposed
+        assert result.exit_code == 0  # REPAIRABLE findings previewed successfully
         assert "would change" in result.output or "CHANGE" in result.output
         assert not (tmp_path / "repaired").exists()
 
@@ -365,7 +365,7 @@ class TestFixDryRunDefault:
 
         result = runner.invoke(app, ["fix", "--dry-run", str(source)])
 
-        assert result.exit_code == 1
+        assert result.exit_code == 0
         assert not (tmp_path / "repaired").exists()
 
     def test_clean_dataset_reports_nothing_to_fix(self, tmp_path: Path) -> None:
@@ -374,7 +374,7 @@ class TestFixDryRunDefault:
 
         result = runner.invoke(app, ["fix", str(source)])
 
-        assert result.exit_code == 0
+        assert result.exit_code == 2  # no REPAIRABLE findings -- nothing to repair
         assert "nothing to fix" in result.output.lower() or "already clean" in result.output.lower()
 
 
@@ -406,7 +406,7 @@ class TestFixApply:
 
         result = runner.invoke(app, ["fix", "--apply", "--out", str(out), str(source)])
 
-        assert result.exit_code == 1
+        assert result.exit_code == 0  # REPAIRABLE finding applied successfully
         assert out.is_dir()
 
         relint = runner.invoke(app, ["lint", "--json", str(out)])
@@ -423,9 +423,10 @@ class TestFixApply:
         )
         assert result.exit_code == 2
 
-    def test_unrepairable_dataset_exits_2_with_clean_message(self, tmp_path: Path) -> None:
+    def test_unrepairable_dataset_exits_1_with_clean_message(self, tmp_path: Path) -> None:
         """Interleaved-data fixture (episode_reindex's refusal path) surfaces as
-        a clean message, never a Python traceback, and writes no output.
+        a clean message, never a Python traceback, and writes no output. Exit 1:
+        a REPAIRABLE finding (episode_reindex's target check) failed to apply.
         """
         source = tmp_path / "source"
         out = tmp_path / "repaired"
@@ -433,18 +434,18 @@ class TestFixApply:
 
         result = runner.invoke(app, ["fix", "--apply", "--out", str(out), str(source)])
 
-        assert result.exit_code == 2
+        assert result.exit_code == 1
         assert result.exception is None or isinstance(result.exception, SystemExit)
         assert "cannot be safely repaired" in result.output or "interleaved" in result.output
         assert not out.exists()
 
-    def test_unrepairable_dataset_dry_run_also_exits_2(self, tmp_path: Path) -> None:
+    def test_unrepairable_dataset_dry_run_also_exits_1(self, tmp_path: Path) -> None:
         source = tmp_path / "source"
         build_v3_interleaved_episode_data(source, num_episodes=2)
 
         result = runner.invoke(app, ["fix", str(source)])
 
-        assert result.exit_code == 2
+        assert result.exit_code == 1
 
 
 class TestFixJson:
@@ -545,7 +546,7 @@ class TestFixCompositionOrder:
         build_v3_drift_and_wrong_stats(source, num_episodes=3, drift_per_frame=5e-5)
 
         result = runner.invoke(app, ["fix", "--apply", "--out", str(out), "--json", str(source)])
-        assert result.exit_code == 1
+        assert result.exit_code == 0
         plan = json.loads(result.output)
         fixer_ids = {f["fixer_id"] for f in plan["fixers"]}
         assert "REPAIR.TIMESTAMP_DEDRIFT" in fixer_ids
@@ -726,7 +727,7 @@ class TestFixQuarantine:
             app, ["fix", "--apply", "--out", str(out), "--quarantine", str(source)]
         )
 
-        assert result.exit_code == 1
+        assert result.exit_code == 0
         assert (out / ".trajlens-quarantine" / "quarantine_manifest.json").is_file()
 
     def test_apply_without_quarantine_leaves_orphan_in_place(self, tmp_path: Path) -> None:
@@ -736,6 +737,6 @@ class TestFixQuarantine:
 
         result = runner.invoke(app, ["fix", "--apply", "--out", str(out), str(source)])
 
-        assert result.exit_code == 1
+        assert result.exit_code == 0
         assert not (out / ".trajlens-quarantine").exists()
         assert (out / "data" / "chunk-000" / "file-001.parquet").is_file()

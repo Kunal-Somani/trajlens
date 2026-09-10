@@ -9,11 +9,27 @@ cycles.
 
 from __future__ import annotations
 
+import enum
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol
 
 from trajlens.model.canonical import CanonicalDataset
+
+
+class Repairability(enum.StrEnum):
+    """Three-way classification of a finding's fix status (M1-D).
+
+    REPAIRABLE            — a fixer exists and can write this format.
+    DETECTED_NOT_WRITABLE — a fixer exists but writable_formats excludes
+        this format; an honest statement of a current limitation, not an
+        error.
+    NO_FIXER              — no fixer targets this check_id at all.
+    """
+
+    REPAIRABLE = "REPAIRABLE"
+    DETECTED_NOT_WRITABLE = "DETECTED_NOT_WRITABLE"
+    NO_FIXER = "NO_FIXER"
 
 
 @dataclass(frozen=True, slots=True)
@@ -134,6 +150,9 @@ class Fixer(Protocol):
 
     fixer_id       — stable dot-namespaced identifier (e.g. "REPAIR.TIMESTAMP_DEDRIFT").
     check_id       — the check whose findings this fixer clears.
+    writable_formats — format_ids this fixer can write (e.g. frozenset({"lerobot"})).
+        Checked against ds.format_id and adapter Capabilities.writable before
+        planning any repair (see Repairability).
 
     dry_run() computes all changes without touching the filesystem and returns
     a Diff.  It must never raise; on unrecoverable error raise RepairError.
@@ -145,6 +164,7 @@ class Fixer(Protocol):
 
     fixer_id: str
     check_id: str
+    writable_formats: frozenset[str]
 
     def dry_run(self, ds: CanonicalDataset) -> Diff: ...
 
