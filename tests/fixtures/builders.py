@@ -1265,6 +1265,73 @@ def build_v3_with_wrong_stats(root: Path, *, camera: str = "top") -> None:
     stats_path.write_text(json.dumps(stats))
 
 
+def build_v3_multidim_action_correct_stats(root: Path, *, camera: str = "top") -> None:
+    """Build a v3.0 dataset with a 3-DoF 'action' feature and correct per-dim stats.json.
+
+    Regression fixture for the STATISTICAL.STATS_MATCH_DATA multi-dimensional
+    pooling bug: prior to the fix, every check comparison folded all
+    dimensions of a multi-dim feature into one pooled Welford accumulator
+    and compared it against each stored per-dimension value in turn, so this
+    exact fixture (three distinct, well-separated per-dimension means)
+    produced a spurious FAIL on every dimension despite stats.json being
+    numerically correct. It must PASS (INFO).
+
+    action[i] = [row_index, row_index + 10, row_index + 100] -- three
+    clearly separated dimensions so a pooled-vs-per-dimension comparison
+    cannot accidentally agree by coincidence.
+    """
+    build_v3_dataset(root, num_episodes=3, camera=camera)
+    info_path = root / "meta" / "info.json"
+    info = json.loads(info_path.read_text())
+    info["features"]["action"] = {"dtype": "float32", "shape": [3], "names": ["j0", "j1", "j2"]}
+    info_path.write_text(json.dumps(info))
+
+    data_path = root / "data" / "chunk-000" / "file-000.parquet"
+    table = pq.read_table(data_path)
+    n_rows = table.num_rows
+    action_col = pa.array(
+        [[float(i), float(i + 10), float(i + 100)] for i in range(n_rows)],
+        type=pa.list_(pa.float32()),
+    )
+    new_table = table.append_column(pa.field("action", pa.list_(pa.float32())), action_col)
+    pq.write_table(new_table, data_path)
+
+    import math as _math
+
+    dims = [range(n_rows), range(10, 10 + n_rows), range(100, 100 + n_rows)]
+    means = [sum(d) / n_rows for d in dims]
+    stds = [
+        _math.sqrt(sum((v - m) ** 2 for v in d) / n_rows) for d, m in zip(dims, means, strict=True)
+    ]
+    _write_stats_json(
+        root,
+        {
+            "action": {
+                "mean": means,
+                "std": stds,
+                "min": [float(d.start) for d in dims],
+                "max": [float(d.stop - 1) for d in dims],
+                "count": float(n_rows),
+            }
+        },
+    )
+
+
+def build_v3_multidim_action_wrong_stats(root: Path, *, camera: str = "top") -> None:
+    """Same as build_v3_multidim_action_correct_stats but dimension 1's mean is wrong.
+
+    Only dimension 1 (the middle DoF) is corrupted, by +50 -- far outside
+    rtol. Regression guard for the paired bug: the finding must name the
+    corrupted dimension specifically ("action[1]") and must NOT also flag
+    dimensions 0 or 2, which are untouched and correct.
+    """
+    build_v3_multidim_action_correct_stats(root, camera=camera)
+    stats_path = root / "meta" / "stats.json"
+    stats = json.loads(stats_path.read_text())
+    stats["action"]["mean"][1] += 50.0
+    stats_path.write_text(json.dumps(stats))
+
+
 def build_v3_drift_and_wrong_stats(
     root: Path, *, camera: str = "top", num_episodes: int = 3, drift_per_frame: float = 5e-5
 ) -> None:

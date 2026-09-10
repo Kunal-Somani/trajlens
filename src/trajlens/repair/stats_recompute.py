@@ -32,7 +32,11 @@ from typing import Any
 import structlog
 
 from trajlens.checks.statistical import _STATS_RTOL as _CHECK_RTOL
-from trajlens.checks.statistical import _relative_error, _stream_feature_columns
+from trajlens.checks.statistical import (
+    _flatten_to_scalars,
+    _relative_error,
+    _stream_feature_columns,
+)
 from trajlens.errors import RepairError
 from trajlens.model.canonical import CanonicalDataset
 from trajlens.repair.protocol import Diff, RepairSummary, StatChange
@@ -67,23 +71,44 @@ def _load_stored_stats(root: Path) -> dict[str, Any] | None:
     return raw
 
 
-def _recompute_stats(ds: CanonicalDataset) -> dict[str, dict[str, float]]:
+def _recompute_stats(ds: CanonicalDataset) -> dict[str, dict[str, Any]]:
     """Stream all data shards once via Welford and return per-feature stats.
 
-    Returns a dict keyed by feature name, each value a dict with keys
-    mean, std, min, max, count — the same five fields the lerobot 0.5.2
-    writer stores in stats.json.
+    Returns a dict keyed by feature name. For a scalar feature every value
+    is a float -- the same five fields (mean, std, min, max, count) the
+    lerobot 0.5.2 writer stores in stats.json. For an N-wide multi-dim
+    feature (e.g. a 7-DoF ``action``), mean/std/min/max are each an
+    N-element list -- one recomputed value per dimension, the same shape
+    lerobot itself stores -- and count stays a single float (it counts
+    frames, not per-dimension scalar observations). Collapsing every
+    dimension into one pooled scalar here would silently destroy a
+    per-joint normalization table on write; see _stream_feature_columns's
+    docstring for why this matters.
     """
     accumulators = _stream_feature_columns(ds)
-    result: dict[str, dict[str, float]] = {}
-    for feat_name, acc in accumulators.items():
-        result[feat_name] = {
-            "mean": acc.mean,
-            "std": acc.std,
-            "min": acc.min if not math.isinf(acc.min) else 0.0,
-            "max": acc.max if not math.isinf(acc.max) else 0.0,
-            "count": float(acc.count),
-        }
+
+    def _clean(v: float) -> float:
+        return v if not math.isinf(v) else 0.0
+
+    result: dict[str, dict[str, Any]] = {}
+    for feat_name, accs in accumulators.items():
+        if len(accs) == 1:
+            acc = accs[0]
+            result[feat_name] = {
+                "mean": acc.mean,
+                "std": acc.std,
+                "min": _clean(acc.min),
+                "max": _clean(acc.max),
+                "count": float(acc.count),
+            }
+        else:
+            result[feat_name] = {
+                "mean": [a.mean for a in accs],
+                "std": [a.std for a in accs],
+                "min": [_clean(a.min) for a in accs],
+                "max": [_clean(a.max) for a in accs],
+                "count": float(accs[0].count),
+            }
     return result
 
 
@@ -131,11 +156,45 @@ class StatsRecomputeFixer:
                 stored_val_raw = feat_stored.get(stat_key)
                 if stored_val_raw is None:
                     continue
+                new_val = new_stats[stat_key]
+
+                if isinstance(new_val, list) or isinstance(stored_val_raw, list):
+                    # Multi-dim feature: StatChange.old_value/new_value are
+                    # scalar floats (repair/protocol.py), so a list-valued
+                    # stat is compared element-wise and any deviating
+                    # element becomes its own StatChange, keyed
+                    # "stat_key[i]" -- never one StatChange holding a
+                    # pooled or list value (the bug this fixer used to have).
+                    stored_list = _flatten_to_scalars(stored_val_raw)
+                    new_list = new_val if isinstance(new_val, list) else [new_val]
+                    if stored_list is None or len(stored_list) != len(new_list):
+                        # Shape itself disagrees with the data -- the paired
+                        # check (STATISTICAL.STATS_MATCH_DATA) reports that
+                        # as a dimension-count-mismatch finding. This fixer
+                        # only corrects values, not shape, so it skips
+                        # rather than guessing an element alignment.
+                        continue
+                    for i, (sv, nv) in enumerate(zip(stored_list, new_list, strict=True)):
+                        deviated = (
+                            (sv != nv)
+                            if stat_key == "count"
+                            else _relative_error(sv, nv) > _CHECK_RTOL
+                        )
+                        if deviated:
+                            changes.append(
+                                StatChange(
+                                    feature=feat_name,
+                                    stat_key=f"{stat_key}[{i}]",
+                                    old_value=sv,
+                                    new_value=nv,
+                                )
+                            )
+                    continue
+
                 try:
                     stored_val = float(stored_val_raw)
                 except (TypeError, ValueError):
                     continue
-                new_val = new_stats[stat_key]
                 # count is always an exact integer — any discrepancy is a bug,
                 # and relative tolerance would mis-fire on tiny counts.
                 if stat_key == "count":
