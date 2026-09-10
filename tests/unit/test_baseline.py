@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from hypothesis import given
+from hypothesis import HealthCheck, given, settings
 from hypothesis import strategies as st
 
 from trajlens.baseline import BASELINE_SCHEMA_VERSION, BaselineStore, IdentityKey, _result_identity
@@ -156,6 +156,18 @@ def _finding_sets(draw: st.DrawFn) -> tuple[list[CheckResult], list[CheckResult]
 
 class TestDiffProperty:
     @given(_finding_sets())
+    # HealthCheck.too_slow suppressed, deadline disabled: this is a
+    # pre-existing environment-sensitive flake, not a strategy problem.
+    # Hypothesis attributes a ~1s one-off warmup to the FIRST draw (its own
+    # report shows draw timings of 1.087s then 0.001s), which trips the
+    # "input generation is slow" health check on slower filesystems. It
+    # reproduced at 3 failures in 5 runs against the completely unmodified
+    # file, both with and without coverage instrumentation, so it is not
+    # caused by the baseline redesign and not fixed by simplifying the
+    # strategies. Suppressing is the remedy Hypothesis's own error message
+    # recommends when the generation cost is real and expected; the
+    # property being asserted below is unaffected.
+    @settings(suppress_health_check=[HealthCheck.too_slow], deadline=None)
     def test_new_and_resolved_match_set_difference(
         self, data: tuple[list[CheckResult], list[CheckResult]]
     ) -> None:

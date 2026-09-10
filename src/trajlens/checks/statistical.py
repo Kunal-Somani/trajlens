@@ -65,19 +65,55 @@ def _relative_error(stored: float, recomputed: float) -> float:
     return abs(stored - recomputed) / denom
 
 
+def _flatten_row_value(val: object) -> list[float]:
+    """Flatten one row's Arrow-derived value to a flat list of per-element floats.
+
+    A scalar feature's row value is a bare number -> a single-element list.
+    A multi-dim feature's row value is a (possibly nested) Python list from
+    Arrow's to_pylist() -> flattened depth-first, in the same row-major order
+    Arrow itself serializes a multi-dim feature in. None (a missing/null
+    cell) becomes [nan] so it still occupies its position rather than being
+    silently dropped, matching WelfordAccumulator.update()'s own NaN handling.
+    """
+    if val is None:
+        return [math.nan]
+    if isinstance(val, list | tuple):
+        flat: list[float] = []
+        for item in val:
+            flat.extend(_flatten_row_value(item))
+        return flat
+    if isinstance(val, int | float):
+        # bool is an int subclass (True/False -> 1.0/0.0), covered here too.
+        return [float(val)]
+    # Arrow's to_pylist() only yields int/float/bool/str/None/list for the
+    # numeric-dtype columns this is called on (dtype not in ("video",
+    # "string")). Any other type reaching here means the declared dtype
+    # disagrees with what is actually stored -- SEMANTIC.FEATURE_DIMENSIONALITY
+    # and STRUCTURAL.SCHEMA_CONSISTENCY are the checks responsible for that
+    # class of finding, so this treats it as an unusable observation (NaN)
+    # rather than raising and aborting the whole check.
+    return [math.nan]
+
+
 def _stream_feature_columns(
     ds: CanonicalDataset,
     episodes: list[object] | None = None,
-) -> dict[str, WelfordAccumulator]:
-    """Stream all non-video features across episodes, updating per-feature accumulators.
+) -> dict[str, list[WelfordAccumulator]]:
+    """Stream all non-video features across episodes, updating per-element accumulators.
 
-    Returns a dict mapping feature_name -> WelfordAccumulator with the full
-    dataset's observations folded in.  Operates in O(1) RAM per row group
-    read.
+    Returns a dict mapping feature_name -> one WelfordAccumulator per element
+    position (length 1 for a scalar feature, length N for an N-wide
+    multi-dim feature such as a 7-DoF ``action``). This mirrors how
+    meta/stats.json itself stores mean/std/min/max — one number per element
+    for a scalar feature, one list of N numbers for an N-wide feature — so a
+    caller can compare like-for-like instead of folding every dimension into
+    a single pooled number (which manufactures FAIL findings on any dataset
+    with a multi-dim feature; see the regression fixture this change adds).
+    Operates in O(1) RAM per row group read.
     """
     from trajlens.model.canonical import EpisodeRecord
 
-    accumulators: dict[str, WelfordAccumulator] = {}
+    accumulators: dict[str, list[WelfordAccumulator]] = {}
     numeric_features = [
         name for name, spec in ds.features.items() if spec.dtype not in ("video", "string")
     ]
@@ -99,23 +135,22 @@ def _stream_feature_columns(
         ep_col = table.column("episode_index").to_pylist()
 
         for feat_name in available:
-            if feat_name not in accumulators:
-                accumulators[feat_name] = WelfordAccumulator()
-            acc = accumulators[feat_name]
-            col = table.column(feat_name)
-            col_list = col.to_pylist()
+            col_list = table.column(feat_name).to_pylist()
             for row_idx, ep_val in enumerate(ep_col):
                 if ep_val != episode.episode_index:
                     continue
-                val = col_list[row_idx]
-                # Multi-dim features are stored as lists in Arrow.
-                if isinstance(val, list):
-                    for scalar in val:
-                        acc.update(float(scalar) if scalar is not None else math.nan)
-                elif val is None:
-                    acc.update(math.nan)
-                else:
-                    acc.update(float(val))
+                flat = _flatten_row_value(col_list[row_idx])
+                accs = accumulators.get(feat_name)
+                if accs is None:
+                    accs = [WelfordAccumulator() for _ in range(len(flat))]
+                    accumulators[feat_name] = accs
+                elif len(accs) < len(flat):
+                    # A ragged/malformed row wider than any seen so far -- extend
+                    # rather than crash; SEMANTIC.FEATURE_DIMENSIONALITY is the
+                    # check responsible for flagging width inconsistency itself.
+                    accs.extend(WelfordAccumulator() for _ in range(len(flat) - len(accs)))
+                for i, scalar in enumerate(flat):
+                    accs[i].update(scalar)
 
     return accumulators
 
@@ -161,18 +196,21 @@ class _StatsMatchDataCheck:
 
         violations: list[str] = []
 
-        # Stream all episodes and accumulate per-feature Welford stats.
+        # Stream all episodes and accumulate per-element Welford stats: one
+        # accumulator per element position, not one pooled accumulator per
+        # feature. A multi-dim feature's dimensions are independent signals
+        # with independent stored mean/std entries -- pooling them together
+        # (the pre-fix behavior) compared every stored per-dimension value
+        # against the same cross-dimension average and manufactured a FAIL
+        # on any dataset with a multi-dim feature such as a 7-DoF action.
         accumulators = _stream_feature_columns(ds)
 
-        for feat_name, acc in accumulators.items():
+        for feat_name, accs in accumulators.items():
             feat_stored = stored_stats.get(feat_name)
             if feat_stored is None:
                 # Feature has data but no stats entry — skip rather than FAIL;
                 # stats.json may intentionally omit some features.
                 continue
-
-            recomputed_mean = acc.mean
-            recomputed_std = acc.std
 
             stored_mean_raw = feat_stored.get("mean")
             stored_std_raw = feat_stored.get("std")
@@ -183,23 +221,33 @@ class _StatsMatchDataCheck:
             if stored_means is None or stored_stds is None:
                 continue
 
-            # For scalar features compare element-wise (list may have 1 element).
-            for i, (sm, ss) in enumerate(zip(stored_means, stored_stds, strict=False)):
-                mean_err = _relative_error(sm, recomputed_mean)
-                std_err = _relative_error(ss, recomputed_std)
+            if len(stored_means) != len(accs) or len(stored_stds) != len(accs):
+                violations.append(
+                    f"feature {feat_name!r}: stored stats have "
+                    f"{len(stored_means)} mean / {len(stored_stds)} std element(s) "
+                    f"but the data has {len(accs)} element(s) per row "
+                    f"(dimension count mismatch)"
+                )
+                continue
+
+            # Element i of stored_means/stored_stds is compared against
+            # accs[i] -- its own dimension's accumulator, never a different
+            # dimension's or a cross-dimension pooled one.
+            for i, (sm, ss, acc) in enumerate(zip(stored_means, stored_stds, accs, strict=True)):
+                idx_suffix = f"[{i}]" if len(accs) > 1 else ""
+                mean_err = _relative_error(sm, acc.mean)
+                std_err = _relative_error(ss, acc.std)
 
                 if mean_err > _STATS_RTOL:
-                    idx_suffix = f"[{i}]" if len(stored_means) > 1 else ""
                     violations.append(
                         f"feature {feat_name!r}{idx_suffix}: stored mean={sm:.8g} "
-                        f"vs recomputed={recomputed_mean:.8g} "
+                        f"vs recomputed={acc.mean:.8g} "
                         f"(relative error {mean_err:.2e} > rtol={_STATS_RTOL:.2e})"
                     )
                 if std_err > _STATS_RTOL:
-                    idx_suffix = f"[{i}]" if len(stored_stds) > 1 else ""
                     violations.append(
                         f"feature {feat_name!r}{idx_suffix}: stored std={ss:.8g} "
-                        f"vs recomputed={recomputed_std:.8g} "
+                        f"vs recomputed={acc.std:.8g} "
                         f"(relative error {std_err:.2e} > rtol={_STATS_RTOL:.2e})"
                     )
 
@@ -302,7 +350,7 @@ class _PerEpisodeStatsMatchCheck:
                 if ep_stored is None:
                     continue  # No stats columns in this shard — skip.
 
-                for feat_name, acc in accumulators.items():
+                for feat_name, accs in accumulators.items():
                     mean_key = f"stats/{feat_name}/mean"
                     std_key = f"stats/{feat_name}/std"
                     if mean_key not in ep_stored and std_key not in ep_stored:
@@ -316,8 +364,19 @@ class _PerEpisodeStatsMatchCheck:
 
                     if stored_means is None or stored_stds is None:
                         continue
+                    if len(stored_means) != len(accs) or len(stored_stds) != len(accs):
+                        finding = (
+                            f"episode {episode.episode_index} feature {feat_name!r}: "
+                            f"dimension count mismatch ({len(stored_means)} stored vs "
+                            f"{len(accs)} in data)"
+                        )
+                        violations.append(finding)
+                        ep_findings.append(finding)
+                        continue
 
-                    for sm, ss in zip(stored_means, stored_stds, strict=False):
+                    # sm/ss/acc are the SAME dimension i's stored value and
+                    # recomputed accumulator -- never a different dimension's.
+                    for sm, ss, acc in zip(stored_means, stored_stds, accs, strict=True):
                         if _relative_error(sm, acc.mean) > _STATS_RTOL:
                             finding = (
                                 f"episode {episode.episode_index} feature {feat_name!r}: "
@@ -342,7 +401,7 @@ class _PerEpisodeStatsMatchCheck:
                 if ep_stored_v2 is None:
                     continue
 
-                for feat_name, acc in accumulators.items():
+                for feat_name, accs in accumulators.items():
                     feat_stored = ep_stored_v2.get(feat_name)
                     if feat_stored is None or not isinstance(feat_stored, dict):
                         continue
@@ -352,8 +411,17 @@ class _PerEpisodeStatsMatchCheck:
 
                     if stored_means is None or stored_stds is None:
                         continue
+                    if len(stored_means) != len(accs) or len(stored_stds) != len(accs):
+                        finding = (
+                            f"episode {episode.episode_index} feature {feat_name!r}: "
+                            f"dimension count mismatch ({len(stored_means)} stored vs "
+                            f"{len(accs)} in data)"
+                        )
+                        violations.append(finding)
+                        ep_findings.append(finding)
+                        continue
 
-                    for sm, ss in zip(stored_means, stored_stds, strict=False):
+                    for sm, ss, acc in zip(stored_means, stored_stds, accs, strict=True):
                         if _relative_error(sm, acc.mean) > _STATS_RTOL:
                             finding = (
                                 f"episode {episode.episode_index} feature {feat_name!r}: "

@@ -25,6 +25,8 @@ from tests.fixtures.builders import (
     build_v3_no_video_feature,
     build_v3_video_fps_match,
     build_v3_video_fps_mismatch,
+    build_v3_video_ntsc_dropframe_declared_matching,
+    build_v3_video_ntsc_dropframe_declared_wrong,
 )
 from trajlens.checks import CheckEngine, registry
 from trajlens.checks.protocol import CheckContext, Severity
@@ -32,6 +34,7 @@ from trajlens.errors import RepairError
 from trajlens.model import build_canonical_dataset
 from trajlens.repair.protocol import Diff, FeatureFieldChange
 from trajlens.repair.video_metadata_sync import CHECK_ID, FIXER_ID, VideoMetadataSyncFixer
+from trajlens.sources.info import DatasetInfoModel
 from trajlens.sources.loader import SourceLoader
 
 CTX = CheckContext(deep=False)
@@ -286,3 +289,67 @@ class TestFailureModes:
 
         with pytest.raises(RepairError, match=r"v3\.0"):
             fixer.dry_run(ds)
+
+
+# ---------------------------------------------------------------------------
+# fps rounding (regression: a raw fractional container rate used to be
+# compared and written verbatim, producing an info.json trajlens itself
+# could not load afterward)
+# ---------------------------------------------------------------------------
+
+
+class TestFpsRounding:
+    def test_ntsc_dropframe_container_matching_declared_is_noop(self, tmp_path: Path) -> None:
+        """A genuine NTSC drop-frame container (~29.97fps) against a declared
+        fps of 30 (its correct nearest integer) must be a no-op.
+
+        Prior to rounding, the raw container rate (29.97...) differed from
+        30 by a relative error of ~1e-3, which exceeds _FPS_RTOL (1e-4) --
+        so this exact real-world container would have been flagged as a
+        mismatch and "corrected" to a value info.json cannot hold.
+        """
+        source = tmp_path / "source"
+        build_v3_video_ntsc_dropframe_declared_matching(source, declared_fps=30)
+
+        fixer = VideoMetadataSyncFixer()
+        diff = fixer.dry_run(_load(source))
+        assert diff.is_noop, diff.changes
+
+    def test_ntsc_dropframe_container_with_genuine_mismatch_rounds_to_whole_number(
+        self, tmp_path: Path
+    ) -> None:
+        """A real mismatch (declared 24, container ~29.97) must still be
+        caught and corrected -- to the ROUNDED whole number (30), never the
+        raw rational (29.97...)."""
+        source = tmp_path / "source"
+        build_v3_video_ntsc_dropframe_declared_wrong(source, declared_fps=24)
+
+        fixer = VideoMetadataSyncFixer()
+        ds = _load(source)
+        diff = fixer.dry_run(ds)
+        assert not diff.is_noop
+        change = diff.changes[0]
+        assert isinstance(change, FeatureFieldChange)
+        assert change.old_value == pytest.approx(24.0)
+        assert change.new_value == 30.0  # exact -- must be a whole number, not ~29.97
+
+    def test_repaired_info_json_fps_is_loadable_and_correct(self, tmp_path: Path) -> None:
+        """apply() must write a value the project's own DatasetInfoModel
+        (fps: int) actually accepts, and the repaired dataset must reload."""
+        source = tmp_path / "source"
+        out = tmp_path / "repaired"
+        build_v3_video_ntsc_dropframe_declared_wrong(source, declared_fps=24)
+
+        fixer = VideoMetadataSyncFixer()
+        ds = _load(source)
+        fixer.apply(ds, out)
+
+        repaired_info = json.loads((out / "meta" / "info.json").read_text())
+        # This is the exact assertion that fails against the pre-fix code:
+        # DatasetInfoModel(fps=...) raises ValidationError for a fractional
+        # value like 29.97002997002997.
+        DatasetInfoModel.model_validate({**repaired_info})
+        assert repaired_info["fps"] == 30
+
+        reloaded = _load(out)
+        assert reloaded.fps == 30
