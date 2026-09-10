@@ -18,6 +18,7 @@ checked, not the docstring.
 from __future__ import annotations
 
 import json
+from fractions import Fraction
 from pathlib import Path
 from typing import Any
 
@@ -760,7 +761,7 @@ def build_v3_corrupt_video(root: Path, *, camera: str = "top") -> None:
     )
 
 
-def _write_real_mp4(path: Path, *, num_frames: int = 5, fps: int = 30) -> None:
+def _write_real_mp4(path: Path, *, num_frames: int = 5, fps: int | Fraction = 30) -> None:
     """Write a minimal but genuinely decodable MP4 using PyAV.
 
     Produces ``num_frames`` solid-colour frames at 16x16 (the smallest
@@ -769,6 +770,11 @@ def _write_real_mp4(path: Path, *, num_frames: int = 5, fps: int = 30) -> None:
 
     Codec choice mirrors LeRobot's default encoder
     (lerobot/datasets/video_utils.py encode_video_frames → libx264).
+
+    ``fps`` accepts a Fraction (e.g. ``Fraction(30000, 1001)`` for genuine
+    NTSC drop-frame ~29.97) so REPAIR.VIDEO_METADATA_SYNC's rounding
+    behavior can be tested against a real, non-integer container rate --
+    not just the always-integer rates every other fixture in this module uses.
     """
     import ctypes
 
@@ -841,6 +847,42 @@ def build_v3_video_fps_match(root: Path, *, camera: str = "top", fps: int = 30) 
     build_v3_dataset(root, camera=camera, fps=fps)
     video_path = root / "videos" / camera / "chunk-000" / "file-000.mp4"
     _write_real_mp4(video_path, fps=fps)
+
+
+def build_v3_video_ntsc_dropframe_declared_matching(
+    root: Path, *, camera: str = "top", declared_fps: int = 30
+) -> None:
+    """Build a v3.0 dataset whose video container is genuine NTSC drop-frame
+    (30000/1001 ~= 29.97fps) while info.json declares the physically correct
+    whole-number fps (30).
+
+    Regression fixture for REPAIR.VIDEO_METADATA_SYNC's fps-rounding fix: a
+    prior version compared/wrote the container's RAW rational rate, so this
+    exact real-world container (its average_rate is never exactly 30.0, only
+    ~29.97) would have been treated as a mismatch and "corrected" to a
+    non-integer fps that info.json's int-typed field cannot hold -- producing
+    a dataset trajlens itself could no longer load. After rounding, 29.97
+    rounds to 30, which already matches the declared value: correctly a
+    no-op, nothing to repair.
+    """
+    build_v3_dataset(root, camera=camera, fps=declared_fps)
+    video_path = root / "videos" / camera / "chunk-000" / "file-000.mp4"
+    _write_real_mp4(video_path, fps=Fraction(30000, 1001))
+
+
+def build_v3_video_ntsc_dropframe_declared_wrong(
+    root: Path, *, camera: str = "top", declared_fps: int = 24
+) -> None:
+    """Same NTSC drop-frame container (~29.97, nearest integer 30) as
+    build_v3_video_ntsc_dropframe_declared_matching, but info.json declares
+    an unrelated, genuinely wrong fps (24).
+
+    Regression fixture proving the fix still corrects a REAL mismatch, and
+    writes the rounded whole number (30), never the raw rational (29.97...).
+    """
+    build_v3_dataset(root, camera=camera, fps=declared_fps)
+    video_path = root / "videos" / camera / "chunk-000" / "file-000.mp4"
+    _write_real_mp4(video_path, fps=Fraction(30000, 1001))
 
 
 def build_v3_no_video_feature(root: Path) -> None:
@@ -1262,6 +1304,73 @@ def build_v3_with_wrong_stats(root: Path, *, camera: str = "top") -> None:
     stats_path = root / "meta" / "stats.json"
     stats = json.loads(stats_path.read_text())
     stats["timestamp"]["mean"] = 0.9  # Correct is ~0.05; delta >> rtol.
+    stats_path.write_text(json.dumps(stats))
+
+
+def build_v3_multidim_action_correct_stats(root: Path, *, camera: str = "top") -> None:
+    """Build a v3.0 dataset with a 3-DoF 'action' feature and correct per-dim stats.json.
+
+    Regression fixture for the STATISTICAL.STATS_MATCH_DATA multi-dimensional
+    pooling bug: prior to the fix, every check comparison folded all
+    dimensions of a multi-dim feature into one pooled Welford accumulator
+    and compared it against each stored per-dimension value in turn, so this
+    exact fixture (three distinct, well-separated per-dimension means)
+    produced a spurious FAIL on every dimension despite stats.json being
+    numerically correct. It must PASS (INFO).
+
+    action[i] = [row_index, row_index + 10, row_index + 100] -- three
+    clearly separated dimensions so a pooled-vs-per-dimension comparison
+    cannot accidentally agree by coincidence.
+    """
+    build_v3_dataset(root, num_episodes=3, camera=camera)
+    info_path = root / "meta" / "info.json"
+    info = json.loads(info_path.read_text())
+    info["features"]["action"] = {"dtype": "float32", "shape": [3], "names": ["j0", "j1", "j2"]}
+    info_path.write_text(json.dumps(info))
+
+    data_path = root / "data" / "chunk-000" / "file-000.parquet"
+    table = pq.read_table(data_path)
+    n_rows = table.num_rows
+    action_col = pa.array(
+        [[float(i), float(i + 10), float(i + 100)] for i in range(n_rows)],
+        type=pa.list_(pa.float32()),
+    )
+    new_table = table.append_column(pa.field("action", pa.list_(pa.float32())), action_col)
+    pq.write_table(new_table, data_path)
+
+    import math as _math
+
+    dims = [range(n_rows), range(10, 10 + n_rows), range(100, 100 + n_rows)]
+    means = [sum(d) / n_rows for d in dims]
+    stds = [
+        _math.sqrt(sum((v - m) ** 2 for v in d) / n_rows) for d, m in zip(dims, means, strict=True)
+    ]
+    _write_stats_json(
+        root,
+        {
+            "action": {
+                "mean": means,
+                "std": stds,
+                "min": [float(d.start) for d in dims],
+                "max": [float(d.stop - 1) for d in dims],
+                "count": float(n_rows),
+            }
+        },
+    )
+
+
+def build_v3_multidim_action_wrong_stats(root: Path, *, camera: str = "top") -> None:
+    """Same as build_v3_multidim_action_correct_stats but dimension 1's mean is wrong.
+
+    Only dimension 1 (the middle DoF) is corrupted, by +50 -- far outside
+    rtol. Regression guard for the paired bug: the finding must name the
+    corrupted dimension specifically ("action[1]") and must NOT also flag
+    dimensions 0 or 2, which are untouched and correct.
+    """
+    build_v3_multidim_action_correct_stats(root, camera=camera)
+    stats_path = root / "meta" / "stats.json"
+    stats = json.loads(stats_path.read_text())
+    stats["action"]["mean"][1] += 50.0
     stats_path.write_text(json.dumps(stats))
 
 

@@ -9,11 +9,46 @@ cycles.
 
 from __future__ import annotations
 
+import shutil
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol
 
+from trajlens.errors import RepairError
 from trajlens.model.canonical import CanonicalDataset
+
+
+def replace_output_dir(output_path: Path) -> None:
+    """Prepare *output_path* to receive a fresh copy-on-write repair output.
+
+    The sole sanctioned way every Fixer.apply() clears its output directory
+    before shutil.copytree()-ing the source tree into it. A prior version of
+    every fixer called ``shutil.rmtree(output_path)`` unconditionally
+    whenever the path already existed, guarded only by "is it the source
+    root" -- so ``trajlens fix ds --apply --out ~/datasets`` silently
+    deleted the entire contents of ``~/datasets`` if that happened to be an
+    existing, non-empty directory the user did not intend to overwrite.
+
+    Refuses (raises RepairError) if *output_path* exists and is non-empty.
+    An empty existing directory (e.g. the user ran ``mkdir out`` first) is
+    removed so copytree can recreate it -- nothing is lost, since it held
+    nothing. A path that does not exist yet is left alone; copytree creates it.
+
+    This does not affect the orchestrator's internal fixer-chaining: every
+    intermediate target it constructs is a fresh ``tempfile.mkdtemp()``
+    subdirectory that never exists yet, so this guard never trips for those
+    -- only a real, pre-existing, non-empty --out can trigger it.
+    """
+    if not output_path.exists():
+        return
+    if any(output_path.iterdir()):
+        raise RepairError(
+            f"--out path {output_path} already exists and is not empty. "
+            f"Refusing to overwrite it (this used to delete its entire "
+            f"contents unconditionally). Remove it yourself first, or "
+            f"choose an empty or nonexistent --out path."
+        )
+    shutil.rmtree(output_path)
 
 
 @dataclass(frozen=True, slots=True)
