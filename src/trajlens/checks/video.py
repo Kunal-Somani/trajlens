@@ -29,47 +29,78 @@ log = structlog.get_logger(__name__)
 _MAX_FRAMES_PER_DECODE = 10_000
 
 
-def _decode_frame_at_position(video_path: str, position: str) -> str | None:
-    """Decode one frame from a video at 'first', 'middle', or 'last' position.
+def _decode_bounded(
+    container: av.container.InputContainer,
+    stream: av.video.stream.VideoStream,
+    *,
+    stop_after_one: bool,
+) -> bool:
+    """Decode frames from the container's current position, discarding each
+    one immediately. Returns True if at least one frame decoded.
 
-    Returns None on success, or an error string on failure.
-    Bounded: never decodes more than _MAX_FRAMES_PER_DECODE frames.
+    Never retains more than the single frame currently being decoded (a
+    prior version accumulated every decoded frame into a list up to
+    _MAX_FRAMES_PER_DECODE=10,000 -- ~14GB for a typical 640x480x3 shard --
+    even though only truthiness of the list was ever checked). Bounded by
+    _MAX_FRAMES_PER_DECODE regardless of stop_after_one, so a malformed
+    file that claims an absurd frame count still cannot force an unbounded
+    decode (T2/T5).
+    """
+    count = 0
+    for frame in container.decode(stream):
+        del frame  # discard immediately; only the count is ever needed
+        count += 1
+        if stop_after_one or count >= _MAX_FRAMES_PER_DECODE:
+            break
+    return count > 0
+
+
+def _decode_frame_at_position(video_path: str, position: str) -> str | None:
+    """Decode near 'first', 'middle', or 'last' position in *video_path*.
+
+    Returns None on success, or an error string on failure. 'middle' and
+    'last' genuinely seek via the container's own duration rather than
+    approximating both with a forward decode from frame 0 (a prior version
+    did exactly that for 'middle', and 'last' merely decoded forward to
+    _MAX_FRAMES_PER_DECODE and reported success regardless of whether the
+    video's true last frame was ever reached -- so a video longer than the
+    cap could have a corrupted tail and this check would still PASS).
+
+    'middle': one successfully decoded frame at the seek point is
+    sufficient signal for a spot-check. 'last': the whole tail segment (from
+    the final keyframe to EOF -- inherently GOP-sized, and still bounded
+    defensively by _MAX_FRAMES_PER_DECODE) is decoded, so a truncated or
+    corrupted tail is actually caught rather than assumed fine.
     """
     try:
         with av.open(video_path) as container:
+            if not container.streams.video:
+                return "no video stream in container"
             stream = container.streams.video[0]
-            frame_count = 0
-            frames_seen: list[object] = []
 
             if position == "first":
-                # Decode just the first frame.
-                for frame in container.decode(stream):
-                    frames_seen.append(frame)
-                    frame_count += 1
-                    if frame_count >= _MAX_FRAMES_PER_DECODE:
-                        break
-                    break
-                if not frames_seen:
-                    return "no frames could be decoded"
-                return None
+                decoded = _decode_bounded(container, stream, stop_after_one=True)
+                return None if decoded else "no frames could be decoded"
 
-            # For middle/last we need to collect frames (or seek).
-            for frame in container.decode(stream):
-                frames_seen.append(frame)
-                frame_count += 1
-                if frame_count >= _MAX_FRAMES_PER_DECODE:
-                    break
+            duration_s = (
+                float(container.duration) / float(av.time_base)
+                if container.duration is not None
+                else None
+            )
+            if duration_s is None:
+                # No duration metadata to seek against -- fall back to a
+                # bounded forward decode from the start rather than
+                # silently claiming a position was verified that never was.
+                decoded = _decode_bounded(container, stream, stop_after_one=(position == "middle"))
+                return None if decoded else "no frames could be decoded"
 
-            if not frames_seen:
-                return "no frames could be decoded"
+            fraction = 0.5 if position == "middle" else 1.0
+            target_us = int(duration_s * fraction * av.time_base)
+            container.seek(target_us, backward=True)
 
-            if position == "last":
-                return None  # We decoded to the end (or our limit).
-
-            if position == "middle":
-                # Just verify we could decode something; middle is approx.
-                return None
-
+            decoded = _decode_bounded(container, stream, stop_after_one=(position == "middle"))
+            if not decoded:
+                return f"no frame decodable near the {position} of the video"
         return None
     except Exception as exc:
         return f"{type(exc).__name__}: {exc}"

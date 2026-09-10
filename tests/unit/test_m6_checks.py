@@ -112,17 +112,39 @@ class TestWelfordAccumulator:
         assert acc.min == 1.0
         assert acc.max == 5.0
 
-    def test_nan_bumps_count_but_not_mean(self) -> None:
+    def test_nan_bumps_count_but_not_mean_or_variance(self) -> None:
+        """NaN bumps the reported population size (count) but must never bias
+        mean/variance -- a NaN observation contributes nothing to the
+        recurrence's own denominator, so the two valid observations (1.0,
+        3.0) are weighted exactly as if the NaN had never been streamed.
+
+        Regression guard: a prior version bumped the SAME counter used as
+        the Welford recurrence's denominator for a NaN input, silently
+        under-weighting every subsequent valid observation (mean would have
+        come out 5/3 instead of the correct 2.0 here).
+        """
         acc = WelfordAccumulator()
         acc.update(1.0)
         acc.update(math.nan)
         acc.update(3.0)
-        assert acc.count == 3  # NaN still bumps count
-        # Welford: NaN does not affect _mean recurrence, but count includes it.
-        # After update(1.0): count=1, mean=1.0
-        # After update(nan): count=2, mean unchanged=1.0 (NaN skips recurrence)
-        # After update(3.0): count=3, delta=3-1=2, mean=1+2/3=5/3
-        assert acc.mean == pytest.approx(5 / 3)
+        assert acc.count == 3  # population size includes every frame, NaN or not
+        assert acc.mean == pytest.approx(2.0)  # (1.0 + 3.0) / 2, NaN excluded
+        assert acc.variance == pytest.approx(1.0)  # ((1-2)**2 + (3-2)**2) / 2
+        assert acc.std == pytest.approx(1.0)
+
+    def test_all_nan_stream_has_count_but_zero_mean(self) -> None:
+        """A stream that is entirely NaN must not raise (division by the
+        valid-observation denominator is guarded the same way an empty
+        stream already is) and must report a real count with a neutral mean."""
+        acc = WelfordAccumulator()
+        acc.update(math.nan)
+        acc.update(math.nan)
+        assert acc.count == 2
+        assert acc.mean == 0.0
+        assert acc.variance == 0.0
+        assert acc.std == 0.0
+        assert math.isinf(acc.min)
+        assert math.isinf(-acc.max)
 
     def test_large_stream_consistent_with_naive(self) -> None:
         """On a moderately long stream, Welford should match the naive formula."""

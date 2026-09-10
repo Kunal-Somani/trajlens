@@ -12,9 +12,11 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+import av
 import pytest
 
 from tests.fixtures.builders import (
+    _write_real_mp4,
     build_v2_dataset,
     build_v3_bad_timestamp_spacing,
     build_v3_corrupt_video,
@@ -45,7 +47,7 @@ from trajlens.checks.temporal import (
     TIMESTAMP_MONOTONIC,
     TIMESTAMP_SPACING,
 )
-from trajlens.checks.video import DECODABLE_SPOTCHECK
+from trajlens.checks.video import DECODABLE_SPOTCHECK, _decode_frame_at_position
 from trajlens.model import build_canonical_dataset
 from trajlens.sources.loader import SourceLoader
 
@@ -683,3 +685,132 @@ class TestDecodableSpotcheck:
         result = DECODABLE_SPOTCHECK.run(_load(tmp_path), CTX)
         assert result.severity is Severity.INFO
         assert "successfully" in result.message
+
+
+# ---------------------------------------------------------------------------
+# _decode_frame_at_position (regression: a prior version's 'middle' never
+# seeked at all -- it decoded from frame 0 exactly like 'first' -- and
+# 'last' decoded forward only to _MAX_FRAMES_PER_DECODE, silently reporting
+# success for a tail beyond that cap it never actually reached. Also
+# regression for unbounded frame retention: a prior version accumulated
+# every decoded frame into a list purely to check truthiness.)
+# ---------------------------------------------------------------------------
+
+
+def _corrupt_packet_bytes(path: Path, packet_index: int) -> None:
+    """Overwrite exactly one encoded packet's bytes in place (0xFF), leaving
+    every other byte -- including the container's duration/keyframe index
+    metadata -- untouched. packet_index=0 is the first keyframe; -1 is the
+    final packet. Used to corrupt a known, narrow region of a video without
+    corrupting its structure or duration."""
+    with av.open(str(path)) as container:
+        stream = container.streams.video[0]
+        packets = [p for p in container.demux(stream) if p.pos is not None and p.size]
+    target = packets[packet_index]
+    data = bytearray(path.read_bytes())
+    for i in range(target.pos, target.pos + target.size):
+        data[i] = 0xFF
+    path.write_bytes(bytes(data))
+
+
+class TestDecodeFrameAtPositionSeeksGenuinely:
+    """Direct tests of _decode_frame_at_position, isolated from the full
+    CheckEngine/CanonicalDataset plumbing DECODABLE_SPOTCHECK sits behind --
+    needed here because the full check's aggregate FAIL result doesn't
+    distinguish which of first/middle/last actually failed."""
+
+    def test_middle_and_last_seek_past_corruption_in_the_first_keyframe(
+        self, tmp_path: Path
+    ) -> None:
+        """If only the first keyframe is corrupted, 'middle' and 'last' must
+        still succeed -- proving they seek to their own genuine position
+        rather than decoding forward from frame 0 like 'first' does.
+
+        Prior to the fix, all three positions decoded forward from frame 0,
+        so corrupting only the first keyframe failed all three identically
+        (verified against the pre-fix code during development -- see
+        trajlens-review/FixLog.md fix #7 for the recorded comparison).
+        """
+        video_path = tmp_path / "video.mp4"
+        _write_real_mp4(video_path, num_frames=30, fps=10, gop_size=5)
+        _corrupt_packet_bytes(video_path, packet_index=0)
+
+        results = {
+            pos: _decode_frame_at_position(str(video_path), pos)
+            for pos in ("first", "middle", "last")
+        }
+        assert results["first"] is not None, "the corrupted first keyframe must be caught"
+        assert results["middle"] is None, results["middle"]
+        assert results["last"] is None, results["last"]
+
+    def test_last_position_catches_tail_corruption_beyond_the_frame_cap(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """'last' must catch corruption in the video's true final packet even
+        when _MAX_FRAMES_PER_DECODE is far smaller than the frame count --
+        proving the seek is duration-based, not limited by the same cap that
+        bounds how many frames are ever retained in memory.
+
+        Prior to the fix, 'last' decoded forward from frame 0 up to the cap
+        and reported success as soon as any frame decoded -- for a video
+        much longer than the cap, it would never reach a corrupted tail at
+        all. Lowering the cap here (matching tests/unit/test_scale.py's
+        established pattern for _MAX_SHARD_ROWS) reproduces that exact
+        "video much longer than the cap" scenario cheaply.
+        """
+        import trajlens.checks.video as video_module
+
+        video_path = tmp_path / "video.mp4"
+        _write_real_mp4(video_path, num_frames=30, fps=10, gop_size=5)
+        _corrupt_packet_bytes(video_path, packet_index=-1)
+
+        monkeypatch.setattr(video_module, "_MAX_FRAMES_PER_DECODE", 5)
+        result = video_module._decode_frame_at_position(str(video_path), "last")
+        assert result is not None, (
+            "the corrupted final packet must be caught even though it lies "
+            "far beyond the artificially small frame cap"
+        )
+
+    def test_last_position_passes_a_healthy_video_even_with_a_tiny_frame_cap(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Companion to the above: a tiny frame cap must not itself cause a
+        false failure on a genuinely healthy video -- the fix must actually
+        distinguish healthy from corrupted, not just always fail once the
+        cap is small."""
+        import trajlens.checks.video as video_module
+
+        video_path = tmp_path / "video.mp4"
+        _write_real_mp4(video_path, num_frames=30, fps=10, gop_size=5)
+
+        monkeypatch.setattr(video_module, "_MAX_FRAMES_PER_DECODE", 5)
+        result = video_module._decode_frame_at_position(str(video_path), "last")
+        assert result is None, result
+
+    def test_never_retains_more_than_one_frame_at_a_time(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """_decode_bounded must discard each frame immediately rather than
+        accumulating them (a prior version built a list of up to
+        _MAX_FRAMES_PER_DECODE=10,000 decoded frames purely to check
+        truthiness -- ~14GB for a typical shard resolution). Verified by
+        counting live av.VideoFrame instances via gc right after decoding,
+        with the cap patched down so the test stays fast."""
+        import gc
+
+        import trajlens.checks.video as video_module
+
+        video_path = tmp_path / "video.mp4"
+        capped_frames = 50
+        _write_real_mp4(video_path, num_frames=capped_frames, fps=10, gop_size=5)
+
+        monkeypatch.setattr(video_module, "_MAX_FRAMES_PER_DECODE", capped_frames)
+        gc.collect()
+        with av.open(str(video_path)) as container:
+            stream = container.streams.video[0]
+            video_module._decode_bounded(container, stream, stop_after_one=False)
+        live_frames = sum(1 for obj in gc.get_objects() if isinstance(obj, av.VideoFrame))
+        assert live_frames <= 1, (
+            f"{live_frames} av.VideoFrame objects still live after decoding "
+            f"{capped_frames} frames -- frames are being retained, not discarded"
+        )

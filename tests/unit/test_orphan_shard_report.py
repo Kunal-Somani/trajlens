@@ -260,7 +260,13 @@ class TestApplyWithQuarantine:
 
         assert before_content == after_content, "source tree must never be modified"
 
-    def test_apply_overwrites_preexisting_output_dir(self, tmp_path: Path) -> None:
+    def test_apply_refuses_non_empty_preexisting_output_dir(self, tmp_path: Path) -> None:
+        """apply() must refuse rather than silently wipe a non-empty --out.
+
+        Regression guard: see the identical guard in
+        tests/unit/test_episode_reindex.py -- a prior version of every
+        fixer's apply() unconditionally rmtree'd a pre-existing output_path.
+        """
         source = tmp_path / "source"
         output = tmp_path / "repaired"
         build_v3_orphan_data_shard(source)
@@ -268,9 +274,20 @@ class TestApplyWithQuarantine:
         (output / "stale.txt").write_text("leftover from a previous run")
 
         fixer = OrphanShardReportFixer(quarantine=True)
+        with pytest.raises(RepairError, match="already exists and is not empty"):
+            fixer.apply(_load(source), output)
+
+        assert (output / "stale.txt").is_file()
+
+    def test_apply_recreates_empty_preexisting_output_dir(self, tmp_path: Path) -> None:
+        source = tmp_path / "source"
+        output = tmp_path / "repaired"
+        build_v3_orphan_data_shard(source)
+        output.mkdir()  # empty -- no stale content
+
+        fixer = OrphanShardReportFixer(quarantine=True)
         fixer.apply(_load(source), output)
 
-        assert not (output / "stale.txt").exists()
         assert (output / ".trajlens-quarantine" / "quarantine_manifest.json").is_file()
 
     def test_quarantine_true_on_clean_dataset_is_noop(self, tmp_path: Path) -> None:
