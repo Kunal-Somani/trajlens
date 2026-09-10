@@ -36,7 +36,12 @@ import structlog
 
 from trajlens.checks.protocol import Check, CheckContext, CheckResult, Severity, Tier
 from trajlens.checks.registry import registry
-from trajlens.checks.utils import ShardColumnCache
+from trajlens.checks.utils import (
+    MAX_PER_EPISODE_ENTRIES,
+    MAX_SAMPLE_MESSAGES,
+    ShardColumnCache,
+    format_violation_count,
+)
 from trajlens.model.canonical import CanonicalDataset
 
 log = structlog.get_logger(__name__)
@@ -66,7 +71,13 @@ class _TimestampMonotonicCheck:
     formats: frozenset[str] | None = None
 
     def run(self, ds: CanonicalDataset, ctx: CheckContext) -> CheckResult:
-        violations: list[str] = []
+        # Every episode is scanned so total_violations is the TRUE count of
+        # affected episodes; sample_violations retains only a bounded slice
+        # for display. A prior version `break`-ed out of this loop after the
+        # first offending episode, so per_episode -- which feeds the report's
+        # worst-episodes ranking -- could never hold more than one entry.
+        sample_violations: list[str] = []
+        total_violations = 0
         per_episode: dict[int, str] = {}
 
         cache = ShardColumnCache(["timestamp"])
@@ -83,19 +94,30 @@ class _TimestampMonotonicCheck:
                         f"Episode {episode.episode_index}: timestamp[{i}]={ts_col[i]:.6f} "
                         f"<= timestamp[{i - 1}]={ts_col[i - 1]:.6f} (not strictly increasing)"
                     )
-                    violations.append(finding)
-                    per_episode[episode.episode_index] = finding
-                    break  # One violation per episode is sufficient signal.
+                    total_violations += 1
+                    if len(sample_violations) < MAX_SAMPLE_MESSAGES:
+                        sample_violations.append(finding)
+                    if len(per_episode) < MAX_PER_EPISODE_ENTRIES:
+                        per_episode[episode.episode_index] = finding
+                    # One violation per episode is sufficient signal -- this
+                    # inner break is deliberate and bounds work per episode;
+                    # the scan still continues to the NEXT episode.
+                    break
 
-            if violations:
-                break
-
-        if violations:
+        if total_violations:
             return CheckResult(
                 check_id=self.id,
                 severity=Severity.FAIL,
-                message=f"Timestamps not strictly monotonic: {violations[0]}",
-                details={"violations": violations},
+                message=(
+                    f"Timestamps not strictly monotonic "
+                    f"({format_violation_count(total_violations, sample_violations)}): "
+                    f"{sample_violations[0]}"
+                ),
+                details={
+                    "violations": sample_violations,
+                    "total_violations": total_violations,
+                    "affected_episodes": len(per_episode),
+                },
                 per_episode=per_episode or None,
             )
         return CheckResult(

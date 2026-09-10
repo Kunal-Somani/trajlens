@@ -68,5 +68,21 @@ def build_episode_summaries(results: list[CheckResult]) -> list[EpisodeSummary]:
 
 
 def worst_episodes(results: list[CheckResult], limit: int = 5) -> list[EpisodeSummary]:
-    """Return up to *limit* episodes with the highest trust contribution, worst first."""
+    """Return up to *limit* episodes with the highest trust contribution, worst first.
+
+    "Worst" is measured ACROSS checks, not within one: an episode flagged by
+    three checks, or by a FAIL rather than a WARN, outranks one flagged by a
+    single lower-severity check. Within a single check every flagged episode
+    carries that check's identical severity weight, so they tie and are
+    ordered by episode_index for determinism -- this ranking cannot say which
+    of two episodes flagged only by the same one check is "worse", because
+    CheckResult.per_episode carries a free-text finding, not a comparable
+    magnitude. Introducing a cross-check magnitude scale would mean inventing
+    an uncalibrated number, so the tie is left explicit rather than papered over.
+
+    This ranking is now computed over EVERY affected episode. It previously
+    ran over whatever subset the checks happened to scan before hitting their
+    own output caps, which biased it toward the lowest-indexed episodes (see
+    checks/utils.py).
+    """
     return build_episode_summaries(results)[:limit]

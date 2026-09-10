@@ -44,7 +44,7 @@ import structlog
 
 from trajlens.errors import RepairError
 from trajlens.model.canonical import CanonicalDataset
-from trajlens.repair.protocol import Diff, FeatureFieldChange, RepairSummary
+from trajlens.repair.protocol import Diff, FeatureFieldChange, RepairSummary, replace_output_dir
 from trajlens.sources.paths import safe_join
 
 log = structlog.get_logger(__name__)
@@ -157,12 +157,28 @@ class VideoMetadataSyncFixer:
         Returns a Diff with at most one FeatureFieldChange (field="fps") when
         the container's average_rate disagrees with info.json's declared fps
         beyond _FPS_RTOL. Returns a no-op Diff if they already agree.
+
+        info.json's fps field is declared int (sources/info.py
+        DatasetInfoModel), matching the live lerobot DatasetInfo dataclass --
+        it is not, and has never been, capable of holding a fractional value.
+        A video container's average_rate can legitimately be a non-integer
+        rational (e.g. 30000/1001 ~= 29.97 for NTSC drop-frame). Writing that
+        raw value straight into info.json would produce a dataset trajlens
+        itself cannot load afterward (DatasetFormatError: "not a valid
+        integer"), which is the worst possible outcome for a *repair*
+        operation. The container's rate is therefore rounded to the nearest
+        whole number before it is ever compared or written -- the only value
+        this field can actually hold -- so e.g. a container reporting 29.97
+        against a declared 30 resolves as a no-op (nothing to fix: 30 is
+        already the correct nearest integer), while a genuine 24-vs-30
+        disagreement still produces a real, loadable correction.
         """
         _check_preconditions(ds)
 
         root = _dataset_root(ds)
         _camera, shard_path = _first_video_shard(ds, root)
-        container_fps = float(_read_container_fps(shard_path))
+        container_fps_raw = float(_read_container_fps(shard_path))
+        container_fps = float(round(container_fps_raw))
 
         declared_fps = float(ds.fps)
         rel_err = abs(container_fps - declared_fps) / max(abs(container_fps), 1e-12)
@@ -182,13 +198,15 @@ class VideoMetadataSyncFixer:
         if diff.is_noop:
             log.info(
                 "video_metadata_sync.dry_run.noop",
-                reason="declared fps already matches video container average_rate",
+                reason="declared fps already matches video container average_rate "
+                "(after rounding the container's rate to the nearest integer)",
             )
         else:
             log.info(
                 "video_metadata_sync.dry_run.changes_found",
                 declared_fps=declared_fps,
-                container_fps=container_fps,
+                container_fps_raw=container_fps_raw,
+                container_fps_rounded=container_fps,
             )
         return diff
 
@@ -222,8 +240,7 @@ class VideoMetadataSyncFixer:
             num_changes=len(diff.changes),
         )
 
-        if output_path.exists():
-            shutil.rmtree(output_path)
+        replace_output_dir(output_path)
         shutil.copytree(source_root, output_path)
 
         if diff.is_noop:

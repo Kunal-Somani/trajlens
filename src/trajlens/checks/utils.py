@@ -6,6 +6,49 @@ from typing import Any
 
 from trajlens.model.canonical import CanonicalDataset, EpisodeRecord
 
+# ---------------------------------------------------------------------------
+# Counting vs. sampling
+#
+# A check must scan EVERY episode so the count it reports is the true total,
+# and retain only a bounded sample of example messages for display. These are
+# two separate concerns and must not be conflated.
+#
+# A prior version conflated them: each of the three per-episode-capable
+# checks `break`-ed out of its scan loop once a display cap was reached, so
+#   - the reported "(N issue(s))" count was the truncation point, not the
+#     true total (a dataset with 10,000 broken episodes reported "5"), and
+#   - CheckResult.per_episode -- which feeds report/episodes.py's
+#     worst-episodes ranking -- was populated only from the lowest-indexed
+#     episodes the scan happened to reach before stopping. For
+#     TEMPORAL.TIMESTAMP_MONOTONIC the outer break fired after the very
+#     first offending episode, so that map could never hold more than one
+#     entry at all.
+# ---------------------------------------------------------------------------
+
+# How many example violation messages to retain for display. Counts stay
+# exact regardless; this only bounds the free-text sample carried in
+# CheckResult.details.
+MAX_SAMPLE_MESSAGES = 20
+
+# Hard ceiling on CheckResult.per_episode entries, so a pathological dataset
+# cannot grow an unbounded per-episode map. Real LeRobot datasets are
+# overwhelmingly in the 10s-1000s of episodes, so in practice this is never
+# reached; when it is, the map is a prefix by episode_index and the reported
+# counts remain exact (they are accumulated independently of this cap).
+MAX_PER_EPISODE_ENTRIES = 10_000
+
+
+def format_violation_count(total: int, samples: list[str]) -> str:
+    """Return an honest '(N issue(s))' fragment for a check's message.
+
+    Names the true total and says so explicitly when only a sample of the
+    messages is being carried, rather than silently presenting the sample
+    size as if it were the total.
+    """
+    if total > len(samples):
+        return f"{total} issue(s), showing first {len(samples)}"
+    return f"{total} issue(s)"
+
 
 class ShardColumnCache:
     """Reads distinct Parquet shards exactly once to avoid O(N^2) HTTP reads.

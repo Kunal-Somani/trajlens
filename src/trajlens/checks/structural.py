@@ -28,7 +28,12 @@ import structlog
 
 from trajlens.checks.protocol import Check, CheckContext, CheckResult, Severity, Tier
 from trajlens.checks.registry import registry
-from trajlens.checks.utils import ShardColumnCache
+from trajlens.checks.utils import (
+    MAX_PER_EPISODE_ENTRIES,
+    MAX_SAMPLE_MESSAGES,
+    ShardColumnCache,
+    format_violation_count,
+)
 from trajlens.model.canonical import CanonicalDataset
 from trajlens.sources.paths import safe_join
 
@@ -269,19 +274,30 @@ class _MetadataDataAgreementCheck:
     formats: frozenset[str] | None = None
 
     def run(self, ds: CanonicalDataset, ctx: CheckContext) -> CheckResult:
-        violations: list[str] = []
+        # Every episode is scanned so total_violations is the TRUE total;
+        # sample_violations retains only a bounded slice of the messages for
+        # display. See checks/utils.py for why these must stay separate.
+        sample_violations: list[str] = []
+        total_violations = 0
         per_episode: dict[int, str] = {}
+        episodes = list(ds)
+
+        def record(finding: str) -> None:
+            nonlocal total_violations
+            total_violations += 1
+            if len(sample_violations) < MAX_SAMPLE_MESSAGES:
+                sample_violations.append(finding)
 
         # 1. Declared num_episodes must match actual episode count.
-        if ds.num_episodes != len(list(ds)):
-            violations.append(
-                f"Declared num_episodes={ds.num_episodes} but {len(list(ds))} episode records found"
+        if ds.num_episodes != len(episodes):
+            record(
+                f"Declared num_episodes={ds.num_episodes} but {len(episodes)} episode records found"
             )
 
         # 2. Sum of declared lengths must equal declared num_frames (if present).
-        declared_total = sum(ep.length for ep in ds)
+        declared_total = sum(ep.length for ep in episodes)
         if ds.num_frames is not None and declared_total != ds.num_frames:
-            violations.append(
+            record(
                 f"Sum of declared episode lengths ({declared_total}) != "
                 f"declared total_frames ({ds.num_frames})"
             )
@@ -289,7 +305,7 @@ class _MetadataDataAgreementCheck:
         # 3. Per-episode: actual row count in shard must equal declared length,
         #    and from/to slice boundaries must agree.
         cache = ShardColumnCache(["episode_index"])
-        for episode in ds:
+        for episode in episodes:
             data = cache.get_episode_data(ds, episode)
             ep_mask = data["episode_index"]
             actual_rows = len(ep_mask)
@@ -300,7 +316,7 @@ class _MetadataDataAgreementCheck:
                     f"Episode {episode.episode_index}: declared length={episode.length} "
                     f"but actual row count={actual_rows} in shard"
                 )
-                violations.append(finding)
+                record(finding)
                 ep_findings.append(finding)
 
             # from/to must span exactly `length` frames.
@@ -312,24 +328,26 @@ class _MetadataDataAgreementCheck:
                     f"!= declared length {episode.length} (from={episode.dataset_from_index}, "
                     f"to={episode.dataset_to_index})"
                 )
-                violations.append(finding)
+                record(finding)
                 ep_findings.append(finding)
 
-            if ep_findings:
+            if ep_findings and len(per_episode) < MAX_PER_EPISODE_ENTRIES:
                 per_episode[episode.episode_index] = " | ".join(ep_findings)
 
-            if len(violations) >= 5:
-                break  # Cap output; first few failures are sufficient signal.
-
-        if violations:
+        if total_violations:
             return CheckResult(
                 check_id=self.id,
                 severity=Severity.FAIL,
                 message=(
-                    f"Metadata/data agreement violated ({len(violations)} issue(s)): "
-                    f"{violations[0]}"
+                    f"Metadata/data agreement violated "
+                    f"({format_violation_count(total_violations, sample_violations)}): "
+                    f"{sample_violations[0]}"
                 ),
-                details={"violations": violations},
+                details={
+                    "violations": sample_violations,
+                    "total_violations": total_violations,
+                    "affected_episodes": len(per_episode),
+                },
                 per_episode=per_episode or None,
             )
         return CheckResult(
