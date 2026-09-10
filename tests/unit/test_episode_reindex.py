@@ -270,8 +270,16 @@ class TestFieldCoverage:
             output / unaffected_shard
         ).read_bytes(), "shard with no corrupted episodes must be byte-identical"
 
-    def test_apply_overwrites_existing_output_directory(self, tmp_path: Path) -> None:
-        """apply() must remove and replace a pre-existing output_path, not merge into it."""
+    def test_apply_refuses_non_empty_preexisting_output_directory(self, tmp_path: Path) -> None:
+        """apply() must refuse a non-empty pre-existing output_path, not silently wipe it.
+
+        Regression guard: a prior version unconditionally rmtree'd
+        output_path whenever it already existed, so `trajlens fix ds
+        --apply --out ~/datasets` would silently delete the entire
+        contents of ~/datasets if that directory happened to already
+        exist. apply() must now raise RepairError instead of deleting
+        anything the caller did not create for this run.
+        """
         source = tmp_path / "source"
         output = tmp_path / "repaired"
         build_v3_metadata_data_disagreement(source, num_episodes=3)
@@ -281,11 +289,25 @@ class TestFieldCoverage:
 
         fixer = EpisodeReindexFixer()
         ds = _load(source)
+        with pytest.raises(RepairError, match="already exists and is not empty"):
+            fixer.apply(ds, output)
+
+        # The pre-existing content must survive the refused apply() untouched.
+        assert (output / "stale_marker.txt").is_file()
+
+    def test_apply_recreates_empty_preexisting_output_directory(self, tmp_path: Path) -> None:
+        """An empty pre-existing output_path (e.g. the caller ran mkdir first)
+        is fine -- nothing is lost by removing and recreating it."""
+        source = tmp_path / "source"
+        output = tmp_path / "repaired"
+        build_v3_metadata_data_disagreement(source, num_episodes=3)
+
+        output.mkdir()  # empty -- no stale content
+
+        fixer = EpisodeReindexFixer()
+        ds = _load(source)
         fixer.apply(ds, output)
 
-        assert not (output / "stale_marker.txt").exists(), (
-            "apply() must fully replace a pre-existing output directory"
-        )
         assert not _has_agreement_finding(output)
 
 

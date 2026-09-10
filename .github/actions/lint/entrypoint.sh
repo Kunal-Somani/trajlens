@@ -1,8 +1,15 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Install trajlens pinned -- never float to @latest
-pip install "trajlens==0.3.0" --quiet
+# Install trajlens pinned -- never float to @latest.
+# Must match (or postdate) the trajlens release that introduced --sarif
+# (v0.4.0, CHANGELOG.md "GitHub Actions composite action + SARIF
+# validation"): 0.3.0 predates --sarif entirely, so pinning to it made
+# every invocation of this action fail on an unrecognized flag before ever
+# reaching trajlens's own lint logic. Bump this in lockstep with the action
+# tag (docs/github-action.md's example pins @v0.4.0) on every release this
+# action ships against.
+pip install "trajlens==0.4.0" --quiet
 
 # Build args array -- NEVER interpolate INPUT_DATASET_REF into a
 # shell string (T1 in 06_SECURITY_AND_THREAT_MODEL.md: this value

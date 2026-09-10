@@ -22,20 +22,29 @@ inputs:
     description: "Path to write SARIF output"
 
 outputs:
+  # A composite action's own outputs are inert without a `value:` mapping
+  # to an actual step output -- without it, every one of these was always
+  # an empty string for any consumer, regardless of what entrypoint.sh
+  # wrote to $GITHUB_OUTPUT. `steps.lint` refers to this action's OWN
+  # internal step below (id: lint), not the consumer's step id.
   grade:
     description: "Lint grade (PASS/WARN/FAIL/ERROR)"
+    value: ${{ steps.lint.outputs.grade }}
   trust-score:
     description: "Numeric trust score 0-100"
+    value: ${{ steps.lint.outputs.trust-score }}
   sarif-file:
     description: "Path to the written SARIF file"
+    value: ${{ steps.lint.outputs.sarif-file }}
 
 runs:
   using: "composite"
   steps:
     - name: "Run trajlens lint"
+      id: lint
       shell: bash
       run: |
-        .github/actions/lint/entrypoint.sh
+        "${{ github.action_path }}/entrypoint.sh"
       env:
         INPUT_DATASET_REF: ${{ inputs.dataset-ref }}
         INPUT_DEEP: ${{ inputs.deep }}
