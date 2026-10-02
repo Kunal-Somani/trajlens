@@ -46,7 +46,7 @@ dependencies = [
 
 [project.optional-dependencies]
 # [hub] is optional — trajlens works fully on local datasets without it
-hub = ["huggingface_hub>=0.23,<2"]
+hub = ["huggingface_hub>=0.23,<3"]
 # [web] is optional — `trajlens web` (02 §3.4) is a thin FastAPI shell over
 # the report layer (ADR-001); a user who only ever runs lint/fix should not
 # be forced to install a web server. fastapi: typed routes, TestClient makes
@@ -62,7 +62,7 @@ dev = [
     "ruff>=0.4,<1",
     # needed at dev/test time to mock Hub resolution and run the opt-in
     # integration test (05 §7 lists huggingface_hub as part of the core set)
-    "huggingface_hub>=0.23,<2",
+    "huggingface_hub>=0.23,<3",
     "pre-commit>=3.7,<5",
     "pip-audit>=2.7,<3",
     # needed to test the web dashboard (FastAPI TestClient + route/security tests)
